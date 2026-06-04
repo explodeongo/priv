@@ -1,5 +1,5 @@
 """
-Prodapt Axiom — Ingestion Pipeline
+SynaptDI — Ingestion Pipeline
 Downloads TM Forum API specs from GitHub, chunks them, embeds with
 nomic-embed-text via Ollama, and stores in ChromaDB.
 
@@ -456,7 +456,7 @@ def build_index(repo_url_map):
 
 if __name__ == "__main__":
     print("=" * 55)
-    print("  Prodapt Axiom — Ingestion Pipeline")
+    print("  SynaptDI — Ingestion Pipeline")
     print("=" * 55)
 
     # Check Ollama is running

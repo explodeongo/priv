@@ -23,4 +23,8 @@ frontend/.env*.local
 # ───────── Logs / OS / editor junk ─────────
 *.log
 .DS_Store
-.claude/settings.local.json
+
+# Local editor / tooling config (machine-specific paths)
+.claude/
+.vscode/
+.idea/
