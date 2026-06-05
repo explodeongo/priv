@@ -17,7 +17,7 @@ Endpoints:
   GET  /health  GET /stats         → health / index stats
 """
 
-import os, json, time, hashlib, uuid, re, requests, threading, base64, hmac, secrets
+import os, json, time, hashlib, uuid, re, requests, threading, base64, hmac, secrets, shutil, subprocess
 from pathlib import Path
 from typing import Optional
 
@@ -26,6 +26,7 @@ from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import chromadb
+import ingest   # reuse the ingestion parsers: parse_openapi_spec, parse_markdown, chunk_text, embed_batch, …
 
 _chroma_lock = threading.Lock()   # protects singleton + upsert/query overlap
 
@@ -313,7 +314,8 @@ def ingest_file_bg(content: bytes, file_name: str, source_name: str, size_mb: fl
             batch_ids.append(make_chunk_id(file_name, i))
             batch_docs.append(chunk)
             batch_metas.append({"source": source_name, "file": file_name,
-                                 "chunk": i, "source_url": ""})
+                                 "chunk": i, "source_url": "",
+                                 "origin": file_name, "origin_type": "file"})
             batch_embs.append(e)
 
             if len(batch_ids) >= 50:
@@ -337,17 +339,169 @@ def ingest_file_bg(content: bytes, file_name: str, source_name: str, size_mb: fl
             raise ValueError("Embedding failed for all chunks — is Ollama running?")
 
         PROCESSING_STATUS[file_name] = {"status": "indexed", "chunks": stored}
-        upsert_upload({"file": file_name, "name": source_name,
+        upsert_upload({"file": file_name, "name": source_name, "type": "file", "origin": file_name,
                        "size": f"{size_mb} MB", "status": "indexed",
                        "chunks": stored, "uploaded": time.strftime("%b %d, %Y")})
 
     except Exception as exc:
         err = str(exc)
         PROCESSING_STATUS[file_name] = {"status": "failed", "chunks": 0, "error": err}
-        upsert_upload({"file": file_name, "name": source_name,
+        upsert_upload({"file": file_name, "name": source_name, "type": "file", "origin": file_name,
                        "size": f"{size_mb} MB", "status": "failed",
                        "chunks": 0, "uploaded": time.strftime("%b %d, %Y"),
                        "error": err})
+
+# ── Knowledge from a Git repo or a web link (reuses ingest.py parsers) ───────
+def _store_chunks(items: list, origin: str, origin_type: str) -> int:
+    """Embed items [{source,file,chunk,document,source_url,spec_id?}] in batches and
+    add them to the collection tagged with a shared `origin` so the whole source
+    can be listed/deleted as a unit. Returns the number of chunks stored."""
+    col, stored = get_collection(), 0
+    for i in range(0, len(items), 64):
+        batch = items[i:i + 64]
+        embs  = ingest.embed_batch([it["document"] for it in batch])
+        ids, docs, metas, es = [], [], [], []
+        for it, e in zip(batch, embs):
+            if e is None:
+                continue
+            ids.append("src_" + hashlib.md5(f"{origin}|{it['file']}|{it['chunk']}".encode()).hexdigest()[:16])
+            docs.append(it["document"])
+            metas.append({"source": it["source"], "file": it["file"], "chunk": it["chunk"],
+                          "spec_id": it.get("spec_id", ""), "source_url": it.get("source_url", ""),
+                          "origin": origin, "origin_type": origin_type})
+            es.append(e)
+        if ids:
+            col.upsert(ids=ids, documents=docs, metadatas=metas, embeddings=es)
+            stored += len(ids)
+            PROCESSING_STATUS[origin] = {"status": "processing", "chunks": stored}
+    return stored
+
+def _html_to_text(html: str) -> str:
+    import html as _h
+    html = re.sub(r"(?is)<(script|style|noscript|head|nav|footer).*?</\1>", " ", html)
+    html = re.sub(r"(?is)<br\s*/?>", "\n", html)
+    html = re.sub(r"(?is)</(p|div|li|h[1-6]|tr|section|article)>", "\n", html)
+    text = _h.unescape(re.sub(r"(?s)<[^>]+>", " ", html))
+    return re.sub(r"\n{3,}", "\n\n", re.sub(r"[ \t]{2,}", " ", text)).strip()
+
+def _fail(origin, label, typ, url, err):
+    PROCESSING_STATUS[origin] = {"status": "failed", "chunks": 0, "error": err[:300]}
+    upsert_upload({"file": origin, "name": label, "type": typ, "url": url, "origin": origin,
+                   "size": typ, "status": "failed", "chunks": 0,
+                   "uploaded": time.strftime("%b %d, %Y"), "error": err[:300]})
+
+def _done(origin, label, typ, url, stored):
+    PROCESSING_STATUS[origin] = {"status": "indexed", "chunks": stored}
+    upsert_upload({"file": origin, "name": label, "type": typ, "url": url, "origin": origin,
+                   "size": typ, "status": "indexed", "chunks": stored,
+                   "uploaded": time.strftime("%b %d, %Y")})
+
+def ingest_web_bg(url: str, origin: str, label: str):
+    PROCESSING_STATUS[origin] = {"status": "processing", "chunks": 0}
+    try:
+        r = requests.get(url, timeout=40, headers={"User-Agent": "SynaptDI/1.0"})
+        r.raise_for_status()
+        if "pdf" in r.headers.get("content-type", "").lower() or url.lower().endswith(".pdf"):
+            import fitz
+            text = "\n".join(p.get_text() for p in fitz.open(stream=r.content, filetype="pdf"))
+        else:
+            text = _html_to_text(r.text)
+        items = [{"source": label, "file": origin, "chunk": i, "document": p, "source_url": url}
+                 for i, p in enumerate(chunk_text(text, size=900, overlap=150)) if len(p) >= 60]
+        stored = _store_chunks(items, origin, "web")
+        if stored == 0:
+            raise ValueError("No readable text found at that URL.")
+        _done(origin, label, "web", url, stored)
+    except Exception as exc:
+        _fail(origin, label, "web", url, str(exc))
+
+def ingest_repo_bg(clone_url: str, origin: str, label: str):
+    PROCESSING_STATUS[origin] = {"status": "processing", "chunks": 0}
+    dest = UPLOADS_DIR / "_repos" / re.sub(r"[^A-Za-z0-9_.-]", "_", origin)
+    try:
+        shutil.rmtree(dest, ignore_errors=True)
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        subprocess.run(["git", "clone", "--depth=1", clone_url, str(dest)],
+                       check=True, capture_output=True, timeout=600)
+        base   = re.sub(r"\.git$", "", clone_url.rstrip("/"))
+        branch = "main"
+        try:
+            hb = subprocess.run(["git", "-C", str(dest), "rev-parse", "--abbrev-ref", "HEAD"],
+                                capture_output=True, timeout=15)
+            branch = hb.stdout.decode().strip() or "main"
+        except Exception:
+            pass
+        blob = f"{base}/blob/{branch}" if base.startswith("http") else ""
+        spec_files = []
+        for ext in ("*.json", "*.yaml", "*.yml"):
+            spec_files.extend(dest.rglob(ext))
+        md_files = [f for f in dest.rglob("*.md") if not ingest.is_junk_markdown(f.name)]
+        seen_hash, items = set(), []
+        for f in spec_files + md_files:
+            if any(p in f.parts for p in (".git", "node_modules", "__pycache__")):
+                continue
+            if "test" in f.name.lower() and f.suffix != ".md":
+                continue
+            parsed = ingest.parse_openapi_spec(f) if f.suffix != ".md" else ingest.parse_markdown(f)
+            if not parsed or not parsed["text"].strip():
+                continue
+            h = hashlib.md5(parsed["text"].encode("utf-8", "ignore")).hexdigest()
+            if h in seen_hash:
+                continue
+            seen_hash.add(h)
+            src, sid = f"{parsed['title']} {parsed['version']}".strip(), ingest.extract_spec_id(f.name)
+            surl = f"{blob}/{'/'.join(f.relative_to(dest).parts)}" if blob else ""
+            for ci, ch in enumerate(ingest.chunk_text(parsed["text"])):
+                if len(ch) >= 60:
+                    items.append({"source": src, "file": f.name, "chunk": ci,
+                                  "document": ch, "source_url": surl, "spec_id": sid})
+        stored = _store_chunks(items, origin, "repo")
+        if stored == 0:
+            raise ValueError("No OpenAPI specs or docs found in that repository.")
+        _done(origin, label, "repo", clone_url, stored)
+    except subprocess.CalledProcessError as exc:
+        _fail(origin, label, "repo", clone_url, exc.stderr.decode()[:200] if exc.stderr else "git clone failed")
+    except Exception as exc:
+        _fail(origin, label, "repo", clone_url, str(exc))
+    finally:
+        shutil.rmtree(dest, ignore_errors=True)   # discard the clone; embeddings are already stored
+
+class RepoReq(BaseModel):
+    url: str
+    label: Optional[str] = None
+
+class WebReq(BaseModel):
+    url: str
+    label: Optional[str] = None
+
+@app.post("/sources/repo")
+def add_repo_source(req: RepoReq, background_tasks: BackgroundTasks, _admin: dict = Depends(require_admin)):
+    url = (req.url or "").strip()
+    if not (url.lower().startswith(("http://", "https://")) or url.startswith("git@")):
+        raise HTTPException(400, "Provide an https git URL, e.g. https://github.com/org/repo.")
+    name   = re.sub(r"\.git$", "", url.rstrip("/")).split("/")[-1] or "repo"
+    origin = "repo:" + name
+    label  = (req.label or name).strip()
+    upsert_upload({"file": origin, "name": label, "type": "repo", "url": url, "origin": origin,
+                   "size": "repo", "status": "processing", "chunks": 0,
+                   "uploaded": time.strftime("%b %d, %Y")})
+    PROCESSING_STATUS[origin] = {"status": "processing", "chunks": 0}
+    background_tasks.add_task(ingest_repo_bg, url, origin, label)
+    return {"origin": origin, "status": "processing"}
+
+@app.post("/sources/weblink")
+def add_web_source(req: WebReq, background_tasks: BackgroundTasks, _admin: dict = Depends(require_admin)):
+    url = (req.url or "").strip()
+    if not url.lower().startswith(("http://", "https://")):
+        raise HTTPException(400, "Provide a valid http(s) URL.")
+    label  = (req.label or url.split("//", 1)[-1][:60]).strip()
+    origin = "web:" + hashlib.md5(url.encode()).hexdigest()[:12]
+    upsert_upload({"file": origin, "name": label, "type": "web", "url": url, "origin": origin,
+                   "size": "web", "status": "processing", "chunks": 0,
+                   "uploaded": time.strftime("%b %d, %Y")})
+    PROCESSING_STATUS[origin] = {"status": "processing", "chunks": 0}
+    background_tasks.add_task(ingest_web_bg, url, origin, label)
+    return {"origin": origin, "status": "processing"}
 
 # ── RAG ────────────────────────────────────────────────────────────────────────
 # Two prompts, chosen by retrieval confidence.
@@ -468,8 +622,8 @@ def retrieve(question: str, q_emb: list, top_k: int, scope: str):
     if total == 0:
         return [], False, NO_INFO_MSG
 
-    upload_files = [d["file"] for d in load_uploads() if d.get("status") == "indexed"]
-    upload_set   = set(upload_files)
+    added     = [d.get("origin") or d.get("file") for d in load_uploads() if d.get("status") == "indexed"]
+    added_set = set(added)
     seen:    set  = set()
     chunks:  list = []
     matched: list = []
@@ -484,9 +638,9 @@ def retrieve(question: str, q_emb: list, top_k: int, scope: str):
 
     if scope == "docs":
         # Answer ONLY from the user's uploaded documents.
-        if upload_files:
+        if added:
             res = col.query(query_embeddings=[q_emb], n_results=min(top_k * 2, total),
-                            where={"file": {"$in": upload_files}},
+                            where={"origin": {"$in": added}},
                             include=["documents", "metadatas", "distances"])
             for d, m, dist in zip(res["documents"][0], res["metadatas"][0], res["distances"][0]):
                 if len(chunks) >= top_k:
@@ -514,9 +668,9 @@ def retrieve(question: str, q_emb: list, top_k: int, scope: str):
 
         # 2. Merge uploaded docs (boosted) + general KB by effective distance.
         pool: list = []
-        if scope == "all" and upload_files:
+        if scope == "all" and added:
             res = col.query(query_embeddings=[q_emb], n_results=min(top_k * 2, total),
-                            where={"file": {"$in": upload_files}},
+                            where={"origin": {"$in": added}},
                             include=["documents", "metadatas", "distances"])
             for d, m, dist in zip(res["documents"][0], res["metadatas"][0], res["distances"][0]):
                 if dist < UPLOAD_MAX_DIST:
@@ -525,7 +679,7 @@ def retrieve(question: str, q_emb: list, top_k: int, scope: str):
         res = col.query(query_embeddings=[q_emb], n_results=min(top_k * 3, total),
                         include=["documents", "metadatas", "distances"])
         for d, m, dist in zip(res["documents"][0], res["metadatas"][0], res["distances"][0]):
-            if m.get("file", "") in upload_set:        # uploads handled separately above
+            if m.get("origin", "") in added_set:        # user-added sources handled separately above
                 continue
             if dist < KB_DIST_MAX:
                 pool.append({"d": d, "m": m, "dist": dist, "upload": False, "eff": dist})
@@ -688,8 +842,8 @@ def documents_library():
     file_stats: dict[str, dict] = {}
     for meta in items["metadatas"]:
         fname = meta.get("file", "")
-        if not fname or fname in upload_files:
-            continue                            # skip user uploads
+        if not fname or fname in upload_files or meta.get("origin"):
+            continue                            # skip user-added sources (files/repos/web)
         if fname not in file_stats:
             folder = file_to_folder.get(fname, "other")
             # Human-readable name: strip extension + normalise
@@ -776,7 +930,7 @@ def delete_document(file_name: str):
     all_items = col.get(include=["metadatas"])
     to_delete = [
         iid for iid, meta in zip(all_items["ids"], all_items["metadatas"])
-        if meta.get("file") == file_name
+        if meta.get("origin") == file_name or meta.get("file") == file_name
     ]
     if to_delete:
         col.delete(ids=to_delete)

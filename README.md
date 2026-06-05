@@ -76,7 +76,28 @@ When it's ready:
 - **API docs** → http://localhost:8000/docs
 - **Health** → http://localhost:8000/health
 
-> The vector index (`backend/chroma_db/`) and cloned specs (`backend/data/`) are **not** committed to the repo — they are generated locally by the ingest step. To rebuild the index manually at any time: `cd backend && source venv/bin/activate && python3 ingest.py`.
+### First login
+
+Authentication is real (hashed passwords + sessions). Seeded demo accounts:
+
+| Email | Password | Role |
+|---|---|---|
+| `admin@synaptdi.com` | `admin123` | admin (can add knowledge, manage users) |
+| `analyst@synaptdi.com` | `analyst123` | analyst |
+| `tom@synaptdi.com` | `viewer123` | viewer |
+
+Change these in production (passwords are hashed in `backend/storage/users.json`, which is git-ignored).
+
+### Adding knowledge (no scripts needed)
+
+As an **admin/analyst**, go to **Documents** and add sources from the UI:
+- **Upload a file** (PDF/TXT/MD/JSON/YAML)
+- **Git repo URL** — clones & indexes any GitHub / TM Forum / MEF repo's OpenAPI specs + docs
+- **Web link** — fetches a page or PDF and indexes its text
+
+Each source indexes in the background and can be deleted (with all its chunks) in one click. In chat, the **Search scope** toggle lets you ask across *Everything*, the *Knowledge Base*, or *My Documents*.
+
+> The vector index (`backend/chroma_db/`) and cloned specs (`backend/data/`) are **not** committed — they are generated locally by the ingest step. To rebuild the base index manually: `cd backend && source venv/bin/activate && python3 ingest.py`.
 
 ---
 

@@ -41,6 +41,8 @@ interface Doc {
   chunks:   number;
   uploaded?: string;
   error?:   string;
+  type?:    "file" | "repo" | "web";
+  url?:     string;
 }
 
 // ── Shared ─────────────────────────────────────────────────────────────────────
@@ -92,6 +94,32 @@ function ManagementTab({ user }: { user: { role: string } | null }) {
   const [loadingLib, setLoadingLib]   = useState(true);
 
   const canUpload = user?.role === "admin" || user?.role === "analyst";
+
+  const [repoUrl, setRepoUrl] = useState("");
+  const [webUrl,  setWebUrl]  = useState("");
+  const [adding,  setAdding]  = useState<"repo" | "web" | null>(null);
+
+  const addSource = async (kind: "repo" | "weblink", url: string) => {
+    if (!url.trim()) { toast("Please enter a URL", "warning"); return; }
+    setAdding(kind === "repo" ? "repo" : "web");
+    try {
+      const t = typeof window !== "undefined" ? localStorage.getItem("synaptdi_token") : null;
+      const r = await fetch(`${API}/sources/${kind}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...(t ? { Authorization: `Bearer ${t}` } : {}) },
+        body: JSON.stringify({ url: url.trim() }),
+      });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(d.detail || (r.status === 403 ? "Admin access required" : "Failed to add source"));
+      toast("Added — indexing in the background", "info");
+      setRepoUrl(""); setWebUrl("");
+      fetchDocs();
+    } catch (e: any) {
+      toast(e.message || "Failed to add source", "error");
+    } finally {
+      setAdding(null);
+    }
+  };
 
   // ── Fetch document list ────────────────────────────────────────────────────
   const fetchDocs = useCallback(async () => {
@@ -268,6 +296,46 @@ function ManagementTab({ user }: { user: { role: string } | null }) {
         </div>
       )}
 
+      {/* Add from a Git repo or a web link */}
+      {canUpload && (
+        <div className="grid sm:grid-cols-2 gap-3">
+          <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-4">
+            <div className="flex items-center gap-2 mb-2">
+              <span className="text-sm font-semibold text-gray-700">From a Git repo</span>
+              <span className="text-[10px] text-gray-400 uppercase tracking-wide">GitHub · TMF · MEF</span>
+            </div>
+            <div className="flex gap-2">
+              <input value={repoUrl} onChange={e => setRepoUrl(e.target.value)}
+                onKeyDown={e => { if (e.key === "Enter") addSource("repo", repoUrl); }}
+                placeholder="https://github.com/org/repo"
+                className="flex-1 min-w-0 border border-gray-200 rounded-xl px-3 py-2 text-sm text-gray-800 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-red-500" />
+              <button onClick={() => addSource("repo", repoUrl)} disabled={adding === "repo"}
+                className="flex-shrink-0 bg-red-600 hover:bg-red-700 disabled:bg-gray-200 text-white rounded-xl px-4 py-2 text-sm font-semibold transition-colors">
+                {adding === "repo" ? "…" : "Add"}
+              </button>
+            </div>
+            <p className="text-xs text-gray-400 mt-1.5">Clones &amp; indexes every OpenAPI spec + doc in the repo.</p>
+          </div>
+          <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-4">
+            <div className="flex items-center gap-2 mb-2">
+              <span className="text-sm font-semibold text-gray-700">From a web link</span>
+              <span className="text-[10px] text-gray-400 uppercase tracking-wide">page or PDF</span>
+            </div>
+            <div className="flex gap-2">
+              <input value={webUrl} onChange={e => setWebUrl(e.target.value)}
+                onKeyDown={e => { if (e.key === "Enter") addSource("weblink", webUrl); }}
+                placeholder="https://example.com/spec"
+                className="flex-1 min-w-0 border border-gray-200 rounded-xl px-3 py-2 text-sm text-gray-800 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-red-500" />
+              <button onClick={() => addSource("weblink", webUrl)} disabled={adding === "web"}
+                className="flex-shrink-0 bg-red-600 hover:bg-red-700 disabled:bg-gray-200 text-white rounded-xl px-4 py-2 text-sm font-semibold transition-colors">
+                {adding === "web" ? "…" : "Add"}
+              </button>
+            </div>
+            <p className="text-xs text-gray-400 mt-1.5">Fetches the page (or PDF) and indexes its text.</p>
+          </div>
+        </div>
+      )}
+
       {/* Toolbar */}
       <div className="flex items-center gap-3 flex-wrap">
         <div className="relative flex-1 min-w-[200px]">
@@ -312,8 +380,15 @@ function ManagementTab({ user }: { user: { role: string } | null }) {
                         </svg>
                       </div>
                       <div className="min-w-0">
-                        <div className="text-sm font-semibold text-gray-900 truncate max-w-xs">{doc.name}</div>
-                        <div className="text-xs text-gray-400 font-mono truncate">{doc.file}</div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm font-semibold text-gray-900 truncate max-w-xs">{doc.name}</span>
+                          {doc.type && doc.type !== "file" && (
+                            <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-amber-50 text-amber-700 border border-amber-200 flex-shrink-0 tracking-wide">
+                              {doc.type === "repo" ? "GIT REPO" : "WEB"}
+                            </span>
+                          )}
+                        </div>
+                        <div className="text-xs text-gray-400 font-mono truncate">{doc.url || doc.file}</div>
                         {doc.error && <div className="text-xs text-red-500 mt-0.5">Error: {doc.error}</div>}
                       </div>
                     </div>

@@ -1,11 +1,9 @@
-fastapi
-uvicorn[standard]
-chromadb
-pymupdf
-requests
-pyyaml
-python-dotenv
-pydantic
-langchain
-langchain-community
-langchain-ollama
+# SynaptDI backend dependencies
+fastapi>=0.110
+uvicorn[standard]>=0.27
+chromadb==1.5.9          # behaviour is tuned to this version (cosine space, HNSW)
+pydantic>=2.5
+requests>=2.31
+pymupdf>=1.24            # PDF text extraction (imported as `fitz`)
+pyyaml>=6.0              # parsing OpenAPI YAML specs
+python-multipart>=0.0.9  # REQUIRED by FastAPI for file uploads
