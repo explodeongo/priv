@@ -73,9 +73,10 @@ export function BrandingProvider({ children }: { children: ReactNode }) {
 
   const saveBranding = useCallback(async (b: Branding) => {
     setBranding(b); // apply immediately
+    const t = typeof window !== "undefined" ? localStorage.getItem("synaptdi_token") : null;
     await fetch(`${API}/branding`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...(t ? { Authorization: `Bearer ${t}` } : {}) },
       body: JSON.stringify(b),
     });
   }, [setBranding]);

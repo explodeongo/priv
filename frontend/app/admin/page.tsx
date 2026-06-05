@@ -7,6 +7,15 @@ import { useBranding, Branding } from "../components/BrandingContext";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
+// Attach the stored session token so admin-only endpoints accept the request.
+function authHeaders(json = false): Record<string, string> {
+  const t = typeof window !== "undefined" ? localStorage.getItem("synaptdi_token") : null;
+  const h: Record<string, string> = {};
+  if (json) h["Content-Type"] = "application/json";
+  if (t) h["Authorization"] = `Bearer ${t}`;
+  return h;
+}
+
 function usePageTitle(t: string) {
   useEffect(() => {
     document.title = `${t} · SynaptDI`;
@@ -100,7 +109,7 @@ function UserManagementTab() {
     try {
       const r = await fetch(`${API}/users/${userId}`, {
         method: "PUT",
-        headers: { "Content-Type": "application/json" },
+        headers: authHeaders(true),
         body: JSON.stringify({ role }),
       });
       if (!r.ok) throw new Error("Failed");
@@ -117,7 +126,7 @@ function UserManagementTab() {
     const prev = users.find(u => u.id === userId);
     setUsers(u => u.filter(usr => usr.id !== userId));
     try {
-      const r = await fetch(`${API}/users/${userId}`, { method: "DELETE" });
+      const r = await fetch(`${API}/users/${userId}`, { method: "DELETE", headers: authHeaders() });
       if (!r.ok) throw new Error("Failed");
       toast(`${prev?.name ?? "User"} removed`);
     } catch {
@@ -136,7 +145,7 @@ function UserManagementTab() {
     try {
       const r = await fetch(`${API}/users`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: authHeaders(true),
         body: JSON.stringify({ name: invName, email: invEmail, role: invRole }),
       });
       if (!r.ok) throw new Error("Failed");

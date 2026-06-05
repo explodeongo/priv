@@ -12,6 +12,7 @@ interface Source {
   chunk: number;
   preview: string;
   url?: string;
+  upload?: boolean;
 }
 
 interface Message {
@@ -179,6 +180,7 @@ export default function Home() {
   const [activeSource, setActiveSource] = useState<Source | null>(null);
   const [prefs, setPrefs] = useState({ topK: 5, showSrc: true });
   const [logo, setLogo] = useState<string | undefined>();
+  const [scope, setScope] = useState<"all" | "kb" | "docs">("all");
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef  = useRef<HTMLTextAreaElement>(null);
 
@@ -197,37 +199,61 @@ export default function Home() {
 
   const ask = useCallback(async (question: string) => {
     if (!question.trim() || loading) return;
+    // Recent turns (before this one) so follow-ups like "what about its events?" work.
+    const history = messages.filter(m => m.content && !m.error)
+                            .slice(-6).map(m => ({ role: m.role, content: m.content }));
     setInput("");
-    setMessages(prev => [...prev, { role: "user", content: question }]);
+    // Add the user turn + an empty assistant bubble we stream into.
+    setMessages(prev => [...prev, { role: "user", content: question }, { role: "assistant", content: "" }]);
     setLoading(true);
+
+    // Immutably patch the trailing assistant message. Pure updater (no in-place
+    // mutation) so React StrictMode's double-invocation can't double the text.
+    const setLast = (patch: Partial<Message>) => setMessages(prev => {
+      const copy = [...prev];
+      const i = copy.length - 1;
+      if (i >= 0 && copy[i].role === "assistant") copy[i] = { ...copy[i], ...patch };
+      return copy;
+    });
+    let acc = "";   // full answer so far (set, never appended-in-place)
+
     try {
-      const res = await fetch(`${API}/query`, {
+      const res = await fetch(`${API}/query/stream`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ question, top_k: prefs.topK }),
+        body: JSON.stringify({ question, top_k: prefs.topK, scope, history }),
         signal: AbortSignal.timeout(180000),
       });
-      if (!res.ok) throw new Error(`API error ${res.status}`);
-      const data = await res.json();
-      setMessages(prev => [...prev, {
-        role: "assistant",
-        content: data.answer,
-        sources: data.sources,
-        latency_ms: data.latency_ms,
-      }]);
+      if (!res.ok || !res.body) throw new Error(`API error ${res.status}`);
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = "";
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        const lines = buf.split("\n");
+        buf = lines.pop() || "";              // keep the last partial line
+        for (const line of lines) {
+          if (!line.trim()) continue;
+          let evt: any;
+          try { evt = JSON.parse(line); } catch { continue; }
+          if (evt.type === "token")      { acc += evt.text; setLast({ content: acc }); }
+          else if (evt.type === "done")  setLast({ sources: evt.sources, latency_ms: evt.latency_ms });
+          else if (evt.type === "error") { acc = evt.text; setLast({ content: acc, error: true }); }
+        }
+      }
     } catch (e: any) {
-      setMessages(prev => [...prev, {
-        role: "assistant",
-        content: e.name === "TimeoutError"
-          ? "Request timed out. The model may still be loading — try again in 30 seconds."
-          : `Could not reach SynaptDI API: ${e.message}. Make sure uvicorn is running on port 8000.`,
-        error: true,
-      }]);
+      const msg = e.name === "TimeoutError"
+        ? "Request timed out. The model may still be loading — try again in 30 seconds."
+        : `Could not reach SynaptDI API: ${e.message}. Make sure uvicorn is running on port 8000.`;
+      setLast({ content: msg, error: true });
     } finally {
       setLoading(false);
       inputRef.current?.focus();
     }
-  }, [loading]);
+  }, [loading, scope, prefs, messages]);
 
   function handleKey(e: React.KeyboardEvent) {
     if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); ask(input); }
@@ -318,7 +344,15 @@ export default function Home() {
                       ? "bg-red-50 text-red-800 border border-red-200 rounded-tl-sm"
                       : "bg-gray-50 text-gray-800 border border-gray-100 rounded-tl-sm"
                   }`}>
-                    {msg.role === "assistant" && !msg.error ? renderMarkdown(msg.content) : <span>{msg.content}</span>}
+                    {msg.role === "assistant" && !msg.error
+                      ? (msg.content
+                          ? renderMarkdown(msg.content)
+                          : <span className="flex items-center gap-1.5 py-0.5">
+                              {[0, 150, 300].map(d => (
+                                <span key={d} className="w-2 h-2 rounded-full bg-red-400 animate-bounce" style={{ animationDelay: `${d}ms` }} />
+                              ))}
+                            </span>)
+                      : <span>{msg.content}</span>}
                   </div>
 
                   {prefs.showSrc && msg.sources && msg.sources.length > 0 && (
@@ -343,8 +377,9 @@ export default function Home() {
                           ) : (
                             <button onClick={() => setActiveSource(src)}
                               className="group flex items-center gap-1.5 text-xs bg-white border border-gray-200 text-gray-500 hover:text-red-600 hover:border-red-300 hover:bg-red-50 rounded-full px-3 py-1 transition-all">
-                              <span className="w-1.5 h-1.5 rounded-full bg-red-500 flex-shrink-0" />
+                              <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${src.upload ? "bg-amber-500" : "bg-red-500"}`} />
                               {stripMd(src.name)}
+                              {src.upload && <span className="text-amber-600 text-[10px] font-medium">· your doc</span>}
                             </button>
                           )}
                         </span>
@@ -358,30 +393,25 @@ export default function Home() {
               </div>
             ))}
 
-            {loading && (
-              <div className="flex items-start gap-3 mb-6">
-                {logo ? (
-                  <img src={logo} alt="Logo"
-                    className="w-8 h-8 rounded-full object-contain flex-shrink-0 shadow-sm bg-white border border-gray-100" />
-                ) : (
-                  <div className="w-8 h-8 rounded-full flex items-center justify-center text-white text-xs font-bold flex-shrink-0 shadow-sm"
-                    style={{ backgroundColor: branding.primaryColor }}>
-                    {firstLetter}
-                  </div>
-                )}
-                <div className="bg-gray-50 border border-gray-100 rounded-2xl rounded-tl-sm px-5 py-3.5 flex items-center gap-1.5">
-                  {[0,150,300].map(d => (
-                    <div key={d} className="w-2 h-2 rounded-full bg-red-400 animate-bounce" style={{ animationDelay: `${d}ms` }} />
-                  ))}
-                </div>
-              </div>
-            )}
             <div ref={bottomRef} />
           </div>
         </main>
 
         {/* Input */}
         <div className="border-t border-gray-200 bg-white px-4 py-4 flex-shrink-0">
+          <div className="max-w-3xl mx-auto mb-2 flex items-center gap-1.5">
+            <span className="text-xs text-gray-400 mr-0.5">Search:</span>
+            {([["all", "Everything"], ["kb", "Knowledge Base"], ["docs", "My Documents"]] as const).map(([v, label]) => (
+              <button key={v} onClick={() => setScope(v)} type="button"
+                className={`text-xs px-2.5 py-1 rounded-full border transition-colors ${
+                  scope === v
+                    ? "bg-red-600 text-white border-red-600"
+                    : "bg-white text-gray-500 border-gray-200 hover:bg-gray-50"
+                }`}>
+                {label}
+              </button>
+            ))}
+          </div>
           <div className="max-w-3xl mx-auto flex items-end gap-3">
             <textarea ref={inputRef} value={input}
               onChange={e => setInput(e.target.value)} onKeyDown={handleKey}

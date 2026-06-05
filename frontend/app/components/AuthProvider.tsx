@@ -2,6 +2,8 @@
 import { createContext, useContext, useState, useEffect, ReactNode } from "react";
 import { useRouter, usePathname } from "next/navigation";
 
+const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+
 export interface User {
   id: string;
   name: string;
@@ -14,6 +16,7 @@ export interface User {
 
 interface AuthCtx {
   user: User | null;
+  token: string | null;
   login: (email: string, password: string) => Promise<void>;
   logout: () => void;
   updateUser: (updates: Partial<User>) => void;
@@ -21,44 +24,30 @@ interface AuthCtx {
 }
 
 const AuthContext = createContext<AuthCtx | null>(null);
-
-const MOCK_USERS: Record<string, { password: string; user: User }> = {
-  "admin@synaptdi.com": {
-    password: "admin123",
-    user: { id: "1", name: "Admin User", email: "admin@synaptdi.com", role: "admin", title: "System Administrator", department: "IT Operations" },
-  },
-  "analyst@synaptdi.com": {
-    password: "analyst123",
-    user: { id: "2", name: "Sarah Chen", email: "analyst@synaptdi.com", role: "analyst", title: "Telecom Standards Analyst", department: "Architecture" },
-  },
-  "marcus@synaptdi.com": {
-    password: "analyst123",
-    user: { id: "3", name: "Marcus Johnson", email: "marcus@synaptdi.com", role: "analyst", title: "Network Standards Engineer", department: "Architecture" },
-  },
-  "lisa@synaptdi.com": {
-    password: "viewer123",
-    user: { id: "4", name: "Lisa Park", email: "lisa@synaptdi.com", role: "viewer", title: "Product Manager", department: "Product" },
-  },
-  "tom@synaptdi.com": {
-    password: "viewer123",
-    user: { id: "5", name: "Tom Wilson", email: "tom@synaptdi.com", role: "viewer", title: "Business Analyst", department: "Strategy" },
-  },
-};
-
 const PUBLIC = ["/login"];
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser]         = useState<User | null>(null);
+  const [token, setToken]       = useState<string | null>(null);
   const [isLoading, setLoading] = useState(true);
   const router   = useRouter();
   const pathname = usePathname();
 
+  // Restore the session from a stored token by asking the backend who we are.
   useEffect(() => {
-    try {
-      const s = localStorage.getItem("synaptdi_user");
-      if (s) setUser(JSON.parse(s));
-    } catch {}
-    setLoading(false);
+    let t: string | null = null;
+    try { t = localStorage.getItem("synaptdi_token"); } catch {}
+    if (!t) { setLoading(false); return; }
+    setToken(t);
+    fetch(`${API}/auth/me`, { headers: { Authorization: `Bearer ${t}` } })
+      .then(r => (r.ok ? r.json() : Promise.reject()))
+      .then(d => {
+        let avatar: string | undefined;
+        try { avatar = localStorage.getItem("synaptdi_avatar_" + d.user.id) || undefined; } catch {}
+        setUser({ ...d.user, avatar });
+      })
+      .catch(() => { try { localStorage.removeItem("synaptdi_token"); } catch {} setToken(null); })
+      .finally(() => setLoading(false));
   }, []);
 
   useEffect(() => {
@@ -69,32 +58,41 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [user, isLoading, pathname, router]);
 
   const login = async (email: string, password: string) => {
-    await new Promise(r => setTimeout(r, 900));
-    const rec = MOCK_USERS[email.toLowerCase().trim()];
-    if (!rec || rec.password !== password) throw new Error("Invalid email or password.");
-    setUser(rec.user);
-    localStorage.setItem("synaptdi_user", JSON.stringify(rec.user));
-    localStorage.setItem("synaptdi_last_login", new Date().toISOString());
-    if (!localStorage.getItem("synaptdi_joined_" + rec.user.id)) {
-      localStorage.setItem("synaptdi_joined_" + rec.user.id, new Date().toISOString());
+    const res = await fetch(`${API}/auth/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email: email.trim(), password }),
+    });
+    if (!res.ok) {
+      throw new Error(res.status === 401 ? "Invalid email or password." : `Login failed (${res.status}).`);
     }
+    const data = await res.json();
+    setUser(data.user);
+    setToken(data.token);
+    try {
+      localStorage.setItem("synaptdi_token", data.token);
+      localStorage.setItem("synaptdi_last_login", new Date().toISOString());
+      if (!localStorage.getItem("synaptdi_joined_" + data.user.id)) {
+        localStorage.setItem("synaptdi_joined_" + data.user.id, new Date().toISOString());
+      }
+    } catch {}
   };
 
   const logout = () => {
     setUser(null);
-    localStorage.removeItem("synaptdi_user");
+    setToken(null);
+    try { localStorage.removeItem("synaptdi_token"); } catch {}
     router.push("/login");
   };
 
+  // Local-only profile tweaks (e.g. avatar); authoritative fields come from /auth/me.
   const updateUser = (updates: Partial<User>) => {
     if (!user) return;
-    const next = { ...user, ...updates };
-    setUser(next);
-    localStorage.setItem("synaptdi_user", JSON.stringify(next));
+    setUser({ ...user, ...updates });
   };
 
   return (
-    <AuthContext.Provider value={{ user, login, logout, updateUser, isLoading }}>
+    <AuthContext.Provider value={{ user, token, login, logout, updateUser, isLoading }}>
       {children}
     </AuthContext.Provider>
   );

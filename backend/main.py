@@ -17,11 +17,12 @@ Endpoints:
   GET  /health  GET /stats         → health / index stats
 """
 
-import os, json, time, hashlib, uuid, re, requests, threading
+import os, json, time, hashlib, uuid, re, requests, threading, base64, hmac, secrets
 from pathlib import Path
 from typing import Optional
 
-from fastapi import FastAPI, HTTPException, UploadFile, File, BackgroundTasks
+from fastapi import FastAPI, HTTPException, UploadFile, File, BackgroundTasks, Header, Depends
+from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import chromadb
@@ -37,12 +38,14 @@ CHROMA_PATH = os.getenv("CHROMA_PATH","./chroma_db")
 # ── Retrieval tuning ─────────────────────────────────────────────────────────
 TOP_K            = 8      # chunks handed to the LLM
 KB_DIST_MAX      = 0.85   # cosine-distance ceiling for a KB chunk to count as relevant
-UPLOAD_THRESHOLD = 0.48   # uploads sit farther out in nomic space; gate them tighter
-UPLOAD_SLOTS     = 2      # max uploaded chunks that may pre-empt KB chunks
 CONFIDENT_DIST   = 0.35   # if the best chunk is this close, treat as high-confidence in-domain
                           # and use the no-refusal prompt even when no spec ID was named
-                          # (stops the 3B over-refusing on strong but un-named matches,
-                          #  e.g. "which ODA component handles trouble tickets?" → ~0.25)
+                          # (stops the model over-refusing on strong but un-named matches)
+# Uploaded docs are intentional context — treat them as first-class, not a gated afterthought.
+UPLOAD_MAX_DIST  = 0.70   # include an uploaded chunk if it's at least loosely on-topic
+UPLOAD_BOOST     = 0.06   # let a relevant upload edge out an equidistant KB chunk in ranking
+UPLOAD_CONFIDENT = 0.55   # an uploaded chunk this close → answer confidently from the user's doc
+DOC_SCOPE_MAX    = 0.90   # in "My Documents" scope, accept almost anything from the docs
 
 NO_INFO_MSG    = ("I don't have enough information in the current knowledge base to "
                   "answer this. The relevant document may not be indexed yet.")
@@ -67,12 +70,87 @@ DEFAULT_BRANDING = {
 }
 
 DEFAULT_USERS = [
-    {"id":"1","name":"Admin User",    "email":"admin@synaptdi.com",   "role":"admin",  "status":"active",  "lastActive":"Now"},
-    {"id":"2","name":"Sarah Chen",    "email":"analyst@synaptdi.com", "role":"analyst","status":"active",  "lastActive":"2h ago"},
-    {"id":"3","name":"Marcus Johnson","email":"marcus@synaptdi.com",  "role":"analyst","status":"active",  "lastActive":"1d ago"},
-    {"id":"4","name":"Lisa Park",     "email":"lisa@synaptdi.com",    "role":"viewer", "status":"away",    "lastActive":"3d ago"},
-    {"id":"5","name":"Tom Wilson",    "email":"tom@synaptdi.com",     "role":"viewer", "status":"inactive","lastActive":"2w ago"},
+    {"id":"1","name":"Admin User",    "email":"admin@synaptdi.com",   "role":"admin",  "status":"active",  "lastActive":"Now",    "title":"System Administrator",      "department":"IT Operations"},
+    {"id":"2","name":"Sarah Chen",    "email":"analyst@synaptdi.com", "role":"analyst","status":"active",  "lastActive":"2h ago", "title":"Telecom Standards Analyst", "department":"Architecture"},
+    {"id":"3","name":"Marcus Johnson","email":"marcus@synaptdi.com",  "role":"analyst","status":"active",  "lastActive":"1d ago", "title":"Network Standards Engineer","department":"Architecture"},
+    {"id":"4","name":"Lisa Park",     "email":"lisa@synaptdi.com",    "role":"viewer", "status":"away",    "lastActive":"3d ago", "title":"Product Manager",           "department":"Product"},
+    {"id":"5","name":"Tom Wilson",    "email":"tom@synaptdi.com",     "role":"viewer", "status":"inactive","lastActive":"2w ago", "title":"Business Analyst",          "department":"Strategy"},
 ]
+
+# Seed passwords for the default accounts — hashed on first load. Change in production.
+SEED_PASSWORDS = {
+    "admin@synaptdi.com":   "admin123",
+    "analyst@synaptdi.com": "analyst123",
+    "marcus@synaptdi.com":  "analyst123",
+    "lisa@synaptdi.com":    "viewer123",
+    "tom@synaptdi.com":     "viewer123",
+}
+
+# ── Auth: hashed passwords + HMAC-signed session tokens (no external deps) ────
+AUTH_SECRET_FILE = STORAGE_DIR / "auth_secret"
+def _auth_secret() -> bytes:
+    if AUTH_SECRET_FILE.exists():
+        return AUTH_SECRET_FILE.read_bytes()
+    s = secrets.token_bytes(32)
+    AUTH_SECRET_FILE.write_bytes(s)
+    return s
+AUTH_SECRET = _auth_secret()
+
+def hash_password(password: str, salt: str = "") -> tuple:
+    salt = salt or secrets.token_hex(16)
+    h = hashlib.pbkdf2_hmac("sha256", password.encode(), bytes.fromhex(salt), 100_000).hex()
+    return h, salt
+
+def verify_password(password: str, h: str, salt: str) -> bool:
+    if not h or not salt:
+        return False
+    calc, _ = hash_password(password, salt)
+    return hmac.compare_digest(calc, h)
+
+def make_token(user: dict, days: int = 7) -> str:
+    payload = {"uid": user["id"], "email": user.get("email"), "role": user.get("role"),
+               "exp": int(time.time()) + days * 86400}
+    body = base64.urlsafe_b64encode(json.dumps(payload).encode()).decode().rstrip("=")
+    sig  = hmac.new(AUTH_SECRET, body.encode(), hashlib.sha256).hexdigest()
+    return f"{body}.{sig}"
+
+def verify_token(token: str):
+    try:
+        body, sig = token.split(".", 1)
+        expected = hmac.new(AUTH_SECRET, body.encode(), hashlib.sha256).hexdigest()
+        if not hmac.compare_digest(sig, expected):
+            return None
+        payload = json.loads(base64.urlsafe_b64decode(body + "=" * (-len(body) % 4)))
+        if payload.get("exp", 0) < time.time():
+            return None
+        return payload
+    except Exception:
+        return None
+
+def _public_user(u: dict) -> dict:
+    """User fields safe to return to clients (never the password hash/salt)."""
+    return {k: u.get(k) for k in
+            ("id", "name", "email", "role", "title", "department", "status", "lastActive")}
+
+class LoginReq(BaseModel):
+    email: str
+    password: str
+
+def current_user(authorization: Optional[str] = Header(None)) -> dict:
+    if not authorization or not authorization.lower().startswith("bearer "):
+        raise HTTPException(401, "Not authenticated")
+    payload = verify_token(authorization.split(" ", 1)[1].strip())
+    if not payload:
+        raise HTTPException(401, "Invalid or expired session")
+    u = next((x for x in _load_users() if x.get("id") == payload.get("uid")), None)
+    if not u:
+        raise HTTPException(401, "User no longer exists")
+    return u
+
+def require_admin(user: dict = Depends(current_user)) -> dict:
+    if user.get("role") != "admin":
+        raise HTTPException(403, "Admin access required")
+    return user
 
 # ── App ────────────────────────────────────────────────────────────────────────
 app = FastAPI(title="SynaptDI API", version="2.0.0")
@@ -304,13 +382,37 @@ def _source_label(meta: dict) -> str:
     sid, src = meta.get("spec_id"), meta.get("source", "Unknown")
     return f"{sid} — {src}" if sid else src
 
-def build_prompt(question: str, chunks: list[dict], guarded: bool) -> str:
+def _format_history(history) -> str:
+    if not history:
+        return ""
+    turns = []
+    for m in history[-6:]:
+        c = (m.get("content") or "").strip()
+        if not c:
+            continue
+        who = "User" if m.get("role") == "user" else "Assistant"
+        turns.append(f"{who}: {c[:600]}")
+    if not turns:
+        return ""
+    return ('RECENT CONVERSATION (use only to resolve references like "it"/"that"; '
+            "the answer itself must still come from CONTEXT):\n" + "\n".join(turns) + "\n\n")
+
+def _retrieval_query(question: str, history) -> str:
+    """Fold the previous user turn into the retrieval query so follow-ups like
+    'what about its events?' still retrieve the right spec."""
+    if history:
+        for m in reversed(history):
+            if m.get("role") == "user" and (m.get("content") or "").strip():
+                return f"{m['content'].strip()}\n{question}".strip()
+    return question
+
+def build_prompt(question: str, chunks: list[dict], guarded: bool, history=None) -> str:
     sysp = GUARDED_PROMPT if guarded else ANSWER_PROMPT
     ctx  = "\n\n".join(
         f"[Source {i+1}: {_source_label(c['metadata'])}]\n{c['document']}"
         for i, c in enumerate(chunks)
     )
-    return f"{sysp}\n\nCONTEXT:\n{ctx}\n\nQUESTION: {question}\n\nANSWER:"
+    return f"{sysp}\n\n{_format_history(history)}CONTEXT:\n{ctx}\n\nQUESTION: {question}\n\nANSWER:"
 
 def generate_answer(prompt: str) -> str:
     r = requests.post(f"{OLLAMA_URL}/api/generate",
@@ -325,10 +427,12 @@ def generate_answer(prompt: str) -> str:
 class QueryRequest(BaseModel):
     question: str
     top_k:    int           = TOP_K
+    scope:    str           = "all"   # "all" = KB + your docs · "kb" = TM Forum only · "docs" = your uploads only
+    history:  Optional[list] = None   # [{role, content}] recent turns, for follow-up questions
     standards_filter: Optional[list] = None
 
 class Source(BaseModel):
-    name: str; file: str; chunk: int; preview: str; url: str = ""
+    name: str; file: str; chunk: int; preview: str; url: str = ""; upload: bool = False
 
 class QueryResponse(BaseModel):
     answer: str; sources: list; latency_ms: int; chunks_retrieved: int
@@ -355,100 +459,103 @@ def stats():
     return {"chunks_indexed": col.count(), "collection": "axiom_v1"}
 
 # ── Query ──────────────────────────────────────────────────────────────────────
-@app.post("/query", response_model=QueryResponse)
-def query(req: QueryRequest):
-    if not req.question.strip():
-        raise HTTPException(400, "Question cannot be empty")
-    start = time.time()
-    top_k = max(1, min(req.top_k, 20))
-
-    try:    q_emb = embed(req.question)
-    except Exception as e: raise HTTPException(503, f"Embedding failed: {e}")
-
+def retrieve(question: str, q_emb: list, top_k: int, scope: str):
+    """Shared retrieval for /query and /query/stream.
+    Returns (chunks, confident, empty_msg). chunks == [] means nothing relevant;
+    empty_msg holds the user-facing fallback text in that case."""
     col = get_collection()
-    try:    total = col.count()
-    except Exception as e: raise HTTPException(503, f"Retrieval failed: {e}")
+    total = col.count()
     if total == 0:
-        return QueryResponse(answer=NO_INFO_MSG, sources=[],
-                             latency_ms=int((time.time()-start)*1000), chunks_retrieved=0)
+        return [], False, NO_INFO_MSG
 
-    seen:    set[tuple] = set()
-    chunks:  list[dict] = []
-    matched: list[str]  = []   # spec IDs the user named that we actually have indexed
+    upload_files = [d["file"] for d in load_uploads() if d.get("status") == "indexed"]
+    upload_set   = set(upload_files)
+    seen:    set  = set()
+    chunks:  list = []
+    matched: list = []
 
-    def take(res, limit: int, dist_max: float):
-        """Append de-duplicated, in-range chunks from a chroma result (distance order)."""
-        if not res.get("documents") or not res["documents"][0]:
-            return
-        for d, m, dist in zip(res["documents"][0], res["metadatas"][0], res["distances"][0]):
-            if limit <= 0:
-                break
-            if dist >= dist_max:
-                continue
-            key = (m.get("file", ""), m.get("chunk", 0))
-            if key in seen:
-                continue
-            seen.add(key)
-            chunks.append({"document": d, "metadata": m, "distance": dist})
-            limit -= 1
+    def add(d, m, dist, upload=False) -> bool:
+        key = (m.get("file", ""), m.get("chunk", 0))
+        if key in seen:
+            return False
+        seen.add(key)
+        chunks.append({"document": d, "metadata": m, "distance": dist, "upload": upload})
+        return True
 
-    try:
-        # ── 1. Spec-targeted retrieval — guarantee named specs are in context ──
-        # If the user names TMF641 (or compares TMF620 vs TMF633), retrieve each
-        # named spec's own chunks directly and in balance. This keeps them from
-        # being outranked — or diluted by "hub" chunks that sit near the centre
-        # of nomic's space and rank close to nearly every query.
-        spec_map = get_spec_map(col)            # builds the by-name index first
-        spec_ids = detect_spec_ids(req.question)  # number- and name-aware
+    if scope == "docs":
+        # Answer ONLY from the user's uploaded documents.
+        if upload_files:
+            res = col.query(query_embeddings=[q_emb], n_results=min(top_k * 2, total),
+                            where={"file": {"$in": upload_files}},
+                            include=["documents", "metadatas", "distances"])
+            for d, m, dist in zip(res["documents"][0], res["metadatas"][0], res["distances"][0]):
+                if len(chunks) >= top_k:
+                    break
+                if dist < DOC_SCOPE_MAX:
+                    add(d, m, dist, upload=True)
+    else:
+        # 1. Spec-targeted retrieval — guarantee named specs are present.
+        spec_map = get_spec_map(col)
+        spec_ids = detect_spec_ids(question)
         matched  = [s for s in spec_ids if spec_map.get(s)]
         if matched:
-            per_spec = max(top_k // len(matched), 2)   # balanced share per named spec
+            per_spec = max(top_k // len(matched), 2)
             for sid in matched:
                 sfiles = sorted(spec_map[sid])
                 res = col.query(query_embeddings=[q_emb], n_results=min(per_spec * 3, total),
                                 where={"file": {"$in": sfiles}},
                                 include=["documents", "metadatas", "distances"])
-                take(res, per_spec, KB_DIST_MAX)
+                n = per_spec
+                for d, m, dist in zip(res["documents"][0], res["metadatas"][0], res["distances"][0]):
+                    if n <= 0:
+                        break
+                    if dist < KB_DIST_MAX and add(d, m, dist):
+                        n -= 1
 
-        # ── 2. Uploaded-document slots (relevance-gated) ──────────────────────
-        # Uploads cluster slightly farther out in nomic space, so reserve a few
-        # slots for them when genuinely relevant — otherwise the KB crowds them out.
-        upload_files = [d["file"] for d in load_uploads() if d.get("status") == "indexed"]
-        if upload_files and len(chunks) < top_k:
-            res = col.query(query_embeddings=[q_emb], n_results=min(top_k, total),
+        # 2. Merge uploaded docs (boosted) + general KB by effective distance.
+        pool: list = []
+        if scope == "all" and upload_files:
+            res = col.query(query_embeddings=[q_emb], n_results=min(top_k * 2, total),
                             where={"file": {"$in": upload_files}},
                             include=["documents", "metadatas", "distances"])
-            take(res, min(UPLOAD_SLOTS, top_k - len(chunks)), UPLOAD_THRESHOLD)
-
-        # ── 3. General semantic fill over the whole corpus ────────────────────
-        if len(chunks) < top_k:
-            res = col.query(query_embeddings=[q_emb], n_results=min(top_k * 3, total),
-                            include=["documents", "metadatas", "distances"])
-            take(res, top_k - len(chunks), KB_DIST_MAX)
-    except Exception as e:
-        raise HTTPException(503, f"Retrieval failed: {e}")
+            for d, m, dist in zip(res["documents"][0], res["metadatas"][0], res["distances"][0]):
+                if dist < UPLOAD_MAX_DIST:
+                    pool.append({"d": d, "m": m, "dist": dist, "upload": True,
+                                 "eff": max(0.0, dist - UPLOAD_BOOST)})
+        res = col.query(query_embeddings=[q_emb], n_results=min(top_k * 3, total),
+                        include=["documents", "metadatas", "distances"])
+        for d, m, dist in zip(res["documents"][0], res["metadatas"][0], res["distances"][0]):
+            if m.get("file", "") in upload_set:        # uploads handled separately above
+                continue
+            if dist < KB_DIST_MAX:
+                pool.append({"d": d, "m": m, "dist": dist, "upload": False, "eff": dist})
+        pool.sort(key=lambda c: c["eff"])
+        for c in pool:
+            if len(chunks) >= top_k:
+                break
+            add(c["d"], c["m"], c["dist"], upload=c["upload"])
 
     if not chunks:
-        return QueryResponse(answer=NO_INFO_MSG, sources=[],
-                             latency_ms=int((time.time()-start)*1000), chunks_retrieved=0)
+        if scope == "docs":
+            msg = ("You haven't uploaded any documents yet — add one on the Documents page."
+                   if not upload_files else
+                   "I couldn't find anything relevant in your uploaded documents for that question.")
+        else:
+            msg = NO_INFO_MSG
+        return [], False, msg
 
-    # Most-relevant first for the LLM
     chunks.sort(key=lambda c: c["distance"])
+    best = chunks[0]["distance"]
+    if scope == "docs":
+        confident = best < UPLOAD_MAX_DIST
+    else:
+        confident = bool(matched) \
+            or any(c["upload"] and c["distance"] < UPLOAD_CONFIDENT for c in chunks) \
+            or best < CONFIDENT_DIST
+    return chunks, confident, ""
 
-    # Use the no-refusal prompt when the user named a spec we have, OR retrieval
-    # is high-confidence (top chunk clearly on-topic). Only fall back to the
-    # guarded/refusable prompt for weak retrieval that might be out-of-domain.
-    confident = bool(matched) or chunks[0]["distance"] < CONFIDENT_DIST
-    try:    answer = generate_answer(build_prompt(req.question, chunks, guarded=not confident))
-    except Exception as e: raise HTTPException(503, f"Generation failed: {e}")
-
-    # If the LLM used its exact "no info" escape hatch, return no sources so the
-    # UI doesn't imply the answer was supported by documents.
-    if answer.lower().strip().startswith(NO_INFO_PREFIX):
-        return QueryResponse(answer=answer, sources=[],
-                             latency_ms=int((time.time()-start)*1000), chunks_retrieved=0)
-
-    # ── Build de-duplicated source list ──────────────────────────────────────
+def build_sources(chunks: list) -> list:
+    """De-duplicated source list as plain dicts (JSON-serialisable for streaming)."""
     src_seen, sources = set(), []
     for c in chunks:
         src = c["metadata"].get("source", "Unknown")
@@ -456,16 +563,104 @@ def query(req: QueryRequest):
             continue
         src_seen.add(src)
         QUERY_HITS[src] = QUERY_HITS.get(src, 0) + 1
-        sources.append(Source(
-            name=src, file=c["metadata"].get("file", ""),
-            chunk=c["metadata"].get("chunk", 0),
-            preview=c["document"][:400] + ("..." if len(c["document"]) > 400 else ""),
-            url=c["metadata"].get("source_url", ""),
-        ))
+        sources.append({
+            "name":    src,
+            "file":    c["metadata"].get("file", ""),
+            "chunk":   c["metadata"].get("chunk", 0),
+            "preview": c["document"][:400] + ("..." if len(c["document"]) > 400 else ""),
+            "url":     c["metadata"].get("source_url", ""),
+            "upload":  bool(c.get("upload")),
+        })
+    return sources
 
-    return QueryResponse(answer=answer, sources=sources,
-                         latency_ms=int((time.time()-start)*1000),
-                         chunks_retrieved=len(chunks))
+def stream_ollama(prompt: str):
+    """Yield answer text fragments from Ollama as they are generated."""
+    with requests.post(f"{OLLAMA_URL}/api/generate",
+                       json={"model": LLM_MODEL, "prompt": prompt, "stream": True,
+                             "options": {"temperature": 0.0, "num_predict": 700,
+                                         "stop": ["QUESTION:", "CONTEXT:"]}},
+                       stream=True, timeout=300) as r:
+        r.raise_for_status()
+        for line in r.iter_lines():
+            if not line:
+                continue
+            try:    obj = json.loads(line)
+            except Exception: continue
+            frag = obj.get("response", "")
+            if frag:
+                yield frag
+            if obj.get("done"):
+                break
+
+@app.post("/query", response_model=QueryResponse)
+def query(req: QueryRequest):
+    if not req.question.strip():
+        raise HTTPException(400, "Question cannot be empty")
+    start = time.time()
+    top_k = max(1, min(req.top_k, 20))
+    scope = (req.scope or "all").lower()
+    if scope not in ("all", "kb", "docs"):
+        scope = "all"
+
+    rq = _retrieval_query(req.question, req.history)
+    try:    q_emb = embed(rq)
+    except Exception as e: raise HTTPException(503, f"Embedding failed: {e}")
+
+    try:    chunks, confident, empty = retrieve(rq, q_emb, top_k, scope)
+    except Exception as e: raise HTTPException(503, f"Retrieval failed: {e}")
+
+    if not chunks:
+        return QueryResponse(answer=empty, sources=[],
+                             latency_ms=int((time.time()-start)*1000), chunks_retrieved=0)
+
+    try:    answer = generate_answer(build_prompt(req.question, chunks, guarded=not confident, history=req.history))
+    except Exception as e: raise HTTPException(503, f"Generation failed: {e}")
+
+    # If the LLM used its exact "no info" escape hatch, return no sources.
+    if answer.lower().strip().startswith(NO_INFO_PREFIX):
+        return QueryResponse(answer=answer, sources=[],
+                             latency_ms=int((time.time()-start)*1000), chunks_retrieved=0)
+
+    return QueryResponse(answer=answer, sources=build_sources(chunks),
+                         latency_ms=int((time.time()-start)*1000), chunks_retrieved=len(chunks))
+
+
+# ── Query (streaming, token-by-token) ────────────────────────────────────────
+@app.post("/query/stream")
+def query_stream(req: QueryRequest):
+    if not req.question.strip():
+        raise HTTPException(400, "Question cannot be empty")
+    start = time.time()
+    top_k = max(1, min(req.top_k, 20))
+    scope = (req.scope or "all").lower()
+    if scope not in ("all", "kb", "docs"):
+        scope = "all"
+    rq = _retrieval_query(req.question, req.history)
+    try:    q_emb = embed(rq)
+    except Exception as e: raise HTTPException(503, f"Embedding failed: {e}")
+    chunks, confident, empty = retrieve(rq, q_emb, top_k, scope)
+
+    def gen():
+        if not chunks:
+            yield json.dumps({"type": "token", "text": empty}) + "\n"
+            yield json.dumps({"type": "done", "sources": [],
+                              "latency_ms": int((time.time() - start) * 1000),
+                              "chunks_retrieved": 0}) + "\n"
+            return
+        acc = ""
+        try:
+            for frag in stream_ollama(build_prompt(req.question, chunks, guarded=not confident)):
+                acc += frag
+                yield json.dumps({"type": "token", "text": frag}) + "\n"
+        except Exception as e:
+            yield json.dumps({"type": "error", "text": f"Generation failed: {e}"}) + "\n"
+            return
+        srcs = [] if acc.lower().strip().startswith(NO_INFO_PREFIX) else build_sources(chunks)
+        yield json.dumps({"type": "done", "sources": srcs,
+                          "latency_ms": int((time.time() - start) * 1000),
+                          "chunks_retrieved": len(chunks)}) + "\n"
+
+    return StreamingResponse(gen(), media_type="application/x-ndjson")
 
 # ── Documents ──────────────────────────────────────────────────────────────────
 @app.get("/documents/library")
@@ -603,7 +798,7 @@ def get_branding():
     return DEFAULT_BRANDING
 
 @app.post("/branding")
-def save_branding_endpoint(body: dict):
+def save_branding_endpoint(body: dict, _admin: dict = Depends(require_admin)):
     cleaned = {k: v for k, v in body.items()
                if k in {"companyName","tagline","primaryColor"} and isinstance(v, str)}
     merged  = {**DEFAULT_BRANDING, **cleaned}
@@ -611,43 +806,118 @@ def save_branding_endpoint(body: dict):
     return merged
 
 # ── Users ──────────────────────────────────────────────────────────────────────
+_DEFAULTS_BY_EMAIL = {u["email"]: u for u in DEFAULT_USERS}
+
+def _ensure_passwords(users: list[dict]) -> bool:
+    """Migrate stored users: give everyone a password hash (seed accounts use
+    their known demo password) and backfill title/department from defaults."""
+    changed = False
+    for u in users:
+        em = (u.get("email") or "").lower()
+        if not u.get("password_hash"):
+            pw = SEED_PASSWORDS.get(em, secrets.token_hex(8))
+            u["password_hash"], u["salt"] = hash_password(pw)
+            changed = True
+        d = _DEFAULTS_BY_EMAIL.get(em)
+        if d:
+            for k in ("title", "department"):
+                if not u.get(k) and d.get(k):
+                    u[k] = d[k]; changed = True
+    return changed
+
 def _load_users() -> list[dict]:
     if USERS_FILE.exists():
-        try: return json.loads(USERS_FILE.read_text())
+        try:
+            users = json.loads(USERS_FILE.read_text())
+            if _ensure_passwords(users):
+                _save_users(users)
+            return users
         except: pass
-    _save_users(DEFAULT_USERS[:])
-    return DEFAULT_USERS[:]
+    users = [dict(u) for u in DEFAULT_USERS]
+    _ensure_passwords(users)
+    _save_users(users)
+    return users
 
 def _save_users(users: list[dict]):
     USERS_FILE.write_text(json.dumps(users, indent=2))
 
+# ── Auth endpoints ───────────────────────────────────────────────────────────
+@app.post("/auth/login")
+def auth_login(body: LoginReq):
+    email = (body.email or "").lower().strip()
+    users = _load_users()
+    u = next((x for x in users if (x.get("email") or "").lower() == email), None)
+    if not u or not verify_password(body.password, u.get("password_hash", ""), u.get("salt", "")):
+        raise HTTPException(401, "Invalid email or password.")
+    u["lastActive"] = "Now"
+    _save_users(users)
+    return {"token": make_token(u), "user": _public_user(u)}
+
+@app.get("/auth/me")
+def auth_me(user: dict = Depends(current_user)):
+    return {"user": _public_user(user)}
+
+@app.put("/auth/profile")
+def auth_update_profile(body: dict, user: dict = Depends(current_user)):
+    """Let a signed-in user edit their own name / title / department."""
+    users = _load_users()
+    for u in users:
+        if u["id"] == user["id"]:
+            for k in ("name", "title", "department"):
+                if k in body and isinstance(body[k], str):
+                    u[k] = body[k]
+            _save_users(users)
+            return {"user": _public_user(u)}
+    raise HTTPException(404, "User not found")
+
+@app.post("/auth/password")
+def auth_change_password(body: dict, user: dict = Depends(current_user)):
+    """Change the signed-in user's own password (verifies the current one)."""
+    new = body.get("new_password", "")
+    if len(new) < 6:
+        raise HTTPException(400, "New password must be at least 6 characters.")
+    users = _load_users()
+    for u in users:
+        if u["id"] == user["id"]:
+            if not verify_password(body.get("current_password", ""), u.get("password_hash", ""), u.get("salt", "")):
+                raise HTTPException(401, "Current password is incorrect.")
+            u["password_hash"], u["salt"] = hash_password(new)
+            _save_users(users)
+            return {"ok": True}
+    raise HTTPException(404, "User not found")
+
 @app.get("/users")
 def get_users():
-    return {"users": _load_users()}
+    return {"users": [_public_user(u) for u in _load_users()]}
 
 @app.post("/users")
-def add_user(body: dict):
-    users   = _load_users()
-    new_u   = {"id": str(uuid.uuid4()), "name": body.get("name",""),
-               "email": body.get("email",""), "role": body.get("role","viewer"),
-               "status": "inactive", "lastActive": "Never"}
+def add_user(body: dict, _admin: dict = Depends(require_admin)):
+    users = _load_users()
+    ph, salt = hash_password(body.get("password") or secrets.token_hex(8))
+    new_u = {"id": str(uuid.uuid4()), "name": body.get("name", ""),
+             "email": body.get("email", ""), "role": body.get("role", "viewer"),
+             "status": "inactive", "lastActive": "Never",
+             "title": body.get("title", ""), "department": body.get("department", ""),
+             "password_hash": ph, "salt": salt}
     users.append(new_u)
     _save_users(users)
-    return new_u
+    return _public_user(new_u)
 
 @app.put("/users/{user_id}")
-def update_user(user_id: str, body: dict):
+def update_user(user_id: str, body: dict, _admin: dict = Depends(require_admin)):
     users = _load_users()
     for u in users:
         if u["id"] == user_id:
-            for k in ("name","role","status"):
+            for k in ("name", "role", "status", "title", "department"):
                 if k in body: u[k] = body[k]
+            if body.get("password"):
+                u["password_hash"], u["salt"] = hash_password(body["password"])
             _save_users(users)
-            return u
+            return _public_user(u)
     raise HTTPException(404, "User not found")
 
 @app.delete("/users/{user_id}")
-def delete_user(user_id: str):
+def delete_user(user_id: str, _admin: dict = Depends(require_admin)):
     users     = _load_users()
     remaining = [u for u in users if u["id"] != user_id]
     if len(remaining) == len(users):

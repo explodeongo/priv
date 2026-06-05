@@ -4,6 +4,8 @@ import AppShell from "../components/AppShell";
 import { useAuth } from "../components/AuthProvider";
 import { useToast } from "../components/Toast";
 
+const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+
 // ── Preferences helpers (shared with chat page) ───────────────────────────────
 const PREFS_KEY = "synaptdi_prefs";
 export interface Prefs { topK: number; showSrc: boolean; emailN: boolean; sysAl: boolean; indexN: boolean; }
@@ -68,9 +70,20 @@ function ProfileTab() {
 
   const initials = name.split(" ").map(w => w[0]).join("").slice(0, 2).toUpperCase();
 
-  const save = () => {
+  const save = async () => {
     updateUser({ name, title, department: dept, avatar });
-    toast("Profile updated successfully");
+    try {
+      const t = localStorage.getItem("synaptdi_token");
+      const r = await fetch(`${API}/auth/profile`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json", ...(t ? { Authorization: `Bearer ${t}` } : {}) },
+        body: JSON.stringify({ name, title, department: dept }),
+      });
+      if (r.ok) toast("Profile updated successfully");
+      else toast("Saved locally — server rejected the update", "warning");
+    } catch {
+      toast("Saved locally, but couldn't reach the server", "warning");
+    }
   };
 
   // Handle profile photo file selection
@@ -85,7 +98,8 @@ function ProfileTab() {
     reader.onload = (ev) => {
       const dataUrl = ev.target?.result as string;
       setAvatar(dataUrl);
-      updateUser({ avatar: dataUrl });   // persist immediately
+      updateUser({ avatar: dataUrl });
+      try { localStorage.setItem("synaptdi_avatar_" + (user?.id || ""), dataUrl); } catch {}
       setUploading(false);
       toast("Profile photo updated");
     };
@@ -97,6 +111,7 @@ function ProfileTab() {
   const removePhoto = () => {
     setAvatar(undefined);
     updateUser({ avatar: undefined });
+    try { localStorage.removeItem("synaptdi_avatar_" + (user?.id || "")); } catch {}
     toast("Profile photo removed");
   };
 
@@ -253,14 +268,29 @@ function SecurityTab() {
   const [pwErr, setPwErr]   = useState("");
   const [revoked, setRev]   = useState<number[]>([]);
 
-  const changePw = (e: React.FormEvent) => {
+  const changePw = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!cur) { setPwErr("Enter your current password."); return; }
     if (nw.length < 8) { setPwErr("New password must be at least 8 characters."); return; }
     if (nw !== conf) { setPwErr("Passwords do not match."); return; }
     setPwErr("");
-    setCur(""); setNw(""); setConf("");
-    toast("Password updated successfully");
+    try {
+      const t = localStorage.getItem("synaptdi_token");
+      const r = await fetch(`${API}/auth/password`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...(t ? { Authorization: `Bearer ${t}` } : {}) },
+        body: JSON.stringify({ current_password: cur, new_password: nw }),
+      });
+      if (!r.ok) {
+        const d = await r.json().catch(() => ({}));
+        setPwErr(d.detail || "Could not update password.");
+        return;
+      }
+      setCur(""); setNw(""); setConf("");
+      toast("Password updated successfully");
+    } catch {
+      setPwErr("Could not reach the server.");
+    }
   };
 
   const lastLogin = (() => {

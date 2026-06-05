@@ -10,8 +10,9 @@ backend/chroma_db.bak/
 # Cloned TM Forum repos — re-fetched by ingest.py; contain nested .git repos (~333MB)
 backend/data/
 
-# Runtime state + user uploads (recreated from defaults in main.py)
+# Runtime state, secrets + user uploads (recreated from defaults in main.py)
 backend/storage/*.json
+backend/storage/auth_secret
 backend/uploads/
 
 # ───────── Frontend / Next.js ─────────
