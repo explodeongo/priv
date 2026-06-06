@@ -45,7 +45,7 @@ ollama pull nomic-embed-text
 
 ---
 
-## Quick start
+## Quick start (macOS / Linux)
 
 ```bash
 # 1. Clone
@@ -68,6 +68,33 @@ cd ..
 # 4. Launch everything
 ./start.sh
 ```
+
+## Quick start (Windows)
+
+Same steps, but use the Windows venv path and the `start.bat` launcher. In **Command Prompt** or **PowerShell**:
+
+```bat
+:: 1. Clone
+git clone https://github.com/dibuAI/SynaptDI.git
+cd SynaptDI
+
+:: 2. Backend
+cd backend
+python -m venv venv
+venv\Scripts\activate
+pip install -r requirements.txt
+cd ..
+
+:: 3. Frontend
+cd frontend
+npm install
+cd ..
+
+:: 4. Launch everything (opens backend + frontend in separate windows)
+start.bat
+```
+
+**Windows prerequisites:** install [Git](https://git-scm.com/download/win), [Python 3.10+](https://www.python.org/downloads/windows/) (check **"Add python.exe to PATH"** during install), [Node.js LTS](https://nodejs.org), and [Ollama for Windows](https://ollama.com/download/windows). Then pull the models: `ollama pull llama3.1:8b` and `ollama pull nomic-embed-text`. The frontend defaults to `http://localhost:8000`, so `.env.local` is optional. *(Prefer Unix tooling? The macOS/Linux steps also work as-is inside **WSL**.)*
 
 On the **first** launch, `start.sh` detects there is no index and runs `ingest.py` automatically — it clones the TM Forum repos and builds the vector index (**~5–10 minutes**, requires Ollama running and internet). Subsequent launches start in seconds.
 
