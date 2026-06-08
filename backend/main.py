@@ -58,6 +58,8 @@ UPLOADS_DIR = Path("./uploads");  UPLOADS_DIR.mkdir(exist_ok=True)
 UPLOADS_FILE  = STORAGE_DIR / "uploads.json"
 BRANDING_FILE = STORAGE_DIR / "branding.json"
 USERS_FILE    = STORAGE_DIR / "users.json"
+CHATCFG_FILE  = STORAGE_DIR / "chat_config.json"
+CONVOS_DIR    = STORAGE_DIR / "conversations"; CONVOS_DIR.mkdir(exist_ok=True)
 
 # ── In-memory state ────────────────────────────────────────────────────────────
 PROCESSING_STATUS: dict[str, dict] = {}   # file → {status, chunks, error?}
@@ -69,6 +71,27 @@ DEFAULT_BRANDING = {
     "tagline":      "Enterprise domains at your fingertips",
     "primaryColor": "#dc2626",
 }
+
+# Admin-configurable chat surface (persona feeds the system prompt; placeholder +
+# suggestions drive the chat UI). Lets the same app be retargeted to any domain.
+DEFAULT_CHAT_CONFIG = {
+    "placeholder": "Ask about TM Forum APIs, ODA, eTOM, SID...",
+    "persona":     "TM Forum telecom standards — Open APIs TMF620–TMF915, ODA (Open Digital Architecture), eTOM, and SID",
+    "suggestions": [
+        "What mandatory fields does TMF622 Product Order require?",
+        "What is the difference between TMF620 and TMF633?",
+        "How do I handle pagination in TM Forum Open APIs?",
+        "Which ODA component handles trouble tickets?",
+        "Explain the eTOM Level 1 processes",
+        "What is the SID ABE for customer data?",
+    ],
+}
+
+def load_chat_config() -> dict:
+    if CHATCFG_FILE.exists():
+        try:    return {**DEFAULT_CHAT_CONFIG, **json.loads(CHATCFG_FILE.read_text())}
+        except: pass
+    return dict(DEFAULT_CHAT_CONFIG)
 
 DEFAULT_USERS = [
     {"id":"1","name":"Admin User",    "email":"admin@synaptdi.com",   "role":"admin",  "status":"active",  "lastActive":"Now",    "title":"System Administrator",      "department":"IT Operations"},
@@ -515,19 +538,22 @@ def add_web_source(req: WebReq, background_tasks: BackgroundTasks, _admin: dict 
 # For open-ended / non-spec queries we keep an out-of-domain escape hatch,
 # because nomic-embed-text distances can't reliably separate in-domain from
 # out-of-domain (an off-topic question can still land at a low distance).
-_BASE_PROMPT = """You are SynaptDI (Synapt Domain Intelligence), a precise assistant for TM Forum telecom standards — Open APIs TMF620–TMF915, ODA (Open Digital Architecture), eTOM, and SID.
-
-Answer the QUESTION using only the CONTEXT below. Each source is labelled with its TM Forum spec number and title. Be specific, and name the spec you actually used (its number and title) when you state a fact. Use bullet points for lists of fields, events, or steps. The context may include several related specs — synthesize across the chunks and focus on exactly what the question asks.
+_PROMPT_INSTRUCTIONS = """Answer the QUESTION using only the CONTEXT below. Each source is labelled with its number and title. Be specific, and name the source you actually used when you state a fact. Use bullet points for lists of fields, events, or steps. The context may include several related sources — synthesize across the chunks and focus on exactly what the question asks.
 
 When asked for the mandatory/required fields of an entity, read them from that entity's MAIN resource schema or its _Create schema (e.g. the ProductOrder or ProductOrder_Create schema) — NOT from a reference (*Ref) or *_Update schema. Give a direct, confident answer; do not say information is missing if a relevant source is present.
 
-Start immediately with the substance of the answer. Do NOT open with filler like "Based on the provided context", "According to the sources", or "To answer the question" — just answer, citing spec numbers inline where relevant."""
+Start immediately with the substance of the answer. Do NOT open with filler like "Based on the provided context", "According to the sources", or "To answer the question" — just answer, citing the source inline where relevant."""
 
-ANSWER_PROMPT  = _BASE_PROMPT
-GUARDED_PROMPT = _BASE_PROMPT + """
+_GUARD_LINE = """
 
 If the CONTEXT does not address the question at all, reply with exactly:
 "I don't have enough information in the current knowledge base to answer this. The relevant document may not be indexed yet." """
+
+def _system_prompt(guarded: bool) -> str:
+    """Build the system prompt, injecting the admin-configured domain persona."""
+    persona = (load_chat_config().get("persona") or DEFAULT_CHAT_CONFIG["persona"]).strip()
+    head = f"You are SynaptDI (Synapt Domain Intelligence), a precise assistant for {persona}."
+    return f"{head}\n\n{_PROMPT_INSTRUCTIONS}" + (_GUARD_LINE if guarded else "")
 
 def _source_label(meta: dict) -> str:
     """Prefix the spec number so the model connects e.g. 'TMF622' (in the
@@ -561,7 +587,7 @@ def _retrieval_query(question: str, history) -> str:
     return question
 
 def build_prompt(question: str, chunks: list[dict], guarded: bool, history=None) -> str:
-    sysp = GUARDED_PROMPT if guarded else ANSWER_PROMPT
+    sysp = _system_prompt(guarded)
     ctx  = "\n\n".join(
         f"[Source {i+1}: {_source_label(c['metadata'])}]\n{c['document']}"
         for i, c in enumerate(chunks)
@@ -883,6 +909,17 @@ def documents_library():
         "groups": sorted_groups,
     }
 
+def _categorize(*hints) -> str:
+    """Best-effort domain bucket for a source, derived from its name / url / id."""
+    blob = " ".join(h for h in hints if h).lower()
+    if "tmforum" in blob or "tm forum" in blob or "tmf" in blob: return "TM Forum"
+    if "oda" in blob:                    return "ODA"
+    if "mef" in blob:                    return "MEF"
+    if "etsi" in blob or "nfv" in blob:  return "ETSI"
+    if "3gpp" in blob:                   return "3GPP"
+    if "ietf" in blob or "rfc" in blob:  return "IETF"
+    return "Other"
+
 @app.get("/documents")
 def list_documents():
     docs = load_uploads()
@@ -893,6 +930,8 @@ def list_documents():
             live = PROCESSING_STATUS[fn]
             d["status"] = live["status"]
             d["chunks"] = live.get("chunks", d.get("chunks", 0))
+        # Auto-organize: tag each source with a domain bucket (TM Forum / ODA / MEF / …)
+        d["category"] = d.get("category") or _categorize(d.get("name"), d.get("url"), d.get("file"))
     return {"documents": docs}
 
 @app.post("/documents/upload")
@@ -958,6 +997,85 @@ def save_branding_endpoint(body: dict, _admin: dict = Depends(require_admin)):
     merged  = {**DEFAULT_BRANDING, **cleaned}
     BRANDING_FILE.write_text(json.dumps(merged, indent=2))
     return merged
+
+# ── Chat config (placeholder / suggestions / domain persona) ─────────────────
+@app.get("/chat-config")
+def get_chat_config():
+    return load_chat_config()
+
+@app.post("/chat-config")
+def save_chat_config(body: dict, _admin: dict = Depends(require_admin)):
+    cfg = load_chat_config()
+    if isinstance(body.get("placeholder"), str): cfg["placeholder"] = body["placeholder"][:200]
+    if isinstance(body.get("persona"), str):     cfg["persona"]     = body["persona"][:600]
+    if isinstance(body.get("suggestions"), list):
+        cfg["suggestions"] = [str(s).strip()[:200] for s in body["suggestions"] if str(s).strip()][:8]
+    CHATCFG_FILE.write_text(json.dumps(cfg, indent=2))
+    return cfg
+
+# ── Conversations (per-user chat history) ────────────────────────────────────
+def _convos_path(uid: str):
+    return CONVOS_DIR / f"{re.sub(r'[^A-Za-z0-9_-]', '_', uid)}.json"
+
+def _load_convos(uid: str) -> list:
+    p = _convos_path(uid)
+    if p.exists():
+        try:    return json.loads(p.read_text())
+        except: pass
+    return []
+
+def _save_convos(uid: str, convos: list):
+    _convos_path(uid).write_text(json.dumps(convos, indent=2))
+
+@app.get("/conversations")
+def list_conversations(user: dict = Depends(current_user)):
+    convos = _load_convos(user["id"])
+    return {"conversations": sorted(
+        [{"id": c["id"], "title": c.get("title", "New chat"),
+          "updated": c.get("updated", 0), "count": len(c.get("messages", []))}
+         for c in convos],
+        key=lambda x: -x["updated"])}
+
+@app.get("/conversations/{cid}")
+def get_conversation(cid: str, user: dict = Depends(current_user)):
+    for c in _load_convos(user["id"]):
+        if c["id"] == cid:
+            return c
+    raise HTTPException(404, "Conversation not found")
+
+@app.post("/conversations")
+def create_conversation(body: dict, user: dict = Depends(current_user)):
+    convos = _load_convos(user["id"])
+    c = {"id": uuid.uuid4().hex[:12],
+         "title": (body.get("title") or "New chat")[:80],
+         "messages": body.get("messages") or [],
+         "updated": int(time.time())}
+    convos.append(c)
+    _save_convos(user["id"], convos)
+    return c
+
+@app.put("/conversations/{cid}")
+def update_conversation(cid: str, body: dict, user: dict = Depends(current_user)):
+    convos = _load_convos(user["id"])
+    for c in convos:
+        if c["id"] == cid:
+            if isinstance(body.get("messages"), list):
+                c["messages"] = body["messages"][:200]
+            if body.get("title"):
+                c["title"] = str(body["title"])[:80]
+            c["updated"] = int(time.time())
+            _save_convos(user["id"], convos)
+            return c
+    raise HTTPException(404, "Conversation not found")
+
+@app.delete("/conversations/{cid}")
+def delete_conversation(cid: str, user: dict = Depends(current_user)):
+    convos = _load_convos(user["id"])
+    remaining = [c for c in convos if c["id"] != cid]
+    if len(remaining) == len(convos):
+        raise HTTPException(404, "Conversation not found")
+    _save_convos(user["id"], remaining)
+    return {"ok": True}
 
 # ── Users ──────────────────────────────────────────────────────────────────────
 _DEFAULTS_BY_EMAIL = {u["email"]: u for u in DEFAULT_USERS}

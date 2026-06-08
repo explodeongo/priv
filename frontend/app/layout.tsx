@@ -3,6 +3,7 @@ import "./globals.css";
 import { AuthProvider } from "./components/AuthProvider";
 import { ToastProvider } from "./components/Toast";
 import { BrandingProvider } from "./components/BrandingContext";
+import { ConversationProvider } from "./components/ConversationContext";
 
 export const metadata: Metadata = {
   title: "SynaptDI",
@@ -15,9 +16,11 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <body className="antialiased">
         <AuthProvider>
           <BrandingProvider>
-            <ToastProvider>
-              {children}
-            </ToastProvider>
+            <ConversationProvider>
+              <ToastProvider>
+                {children}
+              </ToastProvider>
+            </ConversationProvider>
           </BrandingProvider>
         </AuthProvider>
       </body>

@@ -322,6 +322,69 @@ const PRESET_COLORS = [
   { name: "Midnight",     hex: "#0f172a" },
 ];
 
+function PromptConfigCard() {
+  const toast = useToast();
+  const [placeholder, setPlaceholder] = useState("");
+  const [persona, setPersona]         = useState("");
+  const [suggestions, setSuggestions] = useState("");
+  const [busy, setBusy]               = useState(false);
+
+  useEffect(() => {
+    fetch(`${API}/chat-config`).then(r => r.json()).then(c => {
+      setPlaceholder(c.placeholder || "");
+      setPersona(c.persona || "");
+      setSuggestions((c.suggestions || []).join("\n"));
+    }).catch(() => {});
+  }, []);
+
+  const save = async () => {
+    setBusy(true);
+    try {
+      const r = await fetch(`${API}/chat-config`, {
+        method: "POST", headers: authHeaders(true),
+        body: JSON.stringify({
+          placeholder, persona,
+          suggestions: suggestions.split("\n").map(s => s.trim()).filter(Boolean),
+        }),
+      });
+      if (!r.ok) throw new Error();
+      toast("Chat prompt saved — retargeted the assistant");
+    } catch { toast("Failed to save (admin only)", "error"); }
+    finally { setBusy(false); }
+  };
+
+  return (
+    <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
+      <div className="px-6 py-5 border-b border-gray-100">
+        <h2 className="text-sm font-semibold text-gray-900">Chat &amp; Prompt</h2>
+        <p className="text-xs text-gray-400 mt-0.5">Retarget the assistant to any domain (TMF, MEF, …) — no code changes</p>
+      </div>
+      <div className="px-6 py-5 space-y-4">
+        <div>
+          <label className="block text-xs font-semibold text-gray-500 mb-1.5">Domain / persona (drives the system prompt)</label>
+          <textarea value={persona} onChange={e => setPersona(e.target.value)} rows={2}
+            placeholder="e.g. MEF LSO Sonata standards"
+            className="w-full border border-gray-200 rounded-xl px-3.5 py-2.5 text-sm text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-red-500" />
+        </div>
+        <div>
+          <label className="block text-xs font-semibold text-gray-500 mb-1.5">Input placeholder</label>
+          <input value={placeholder} onChange={e => setPlaceholder(e.target.value)}
+            className="w-full border border-gray-200 rounded-xl px-3.5 py-2.5 text-sm text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-red-500" />
+        </div>
+        <div>
+          <label className="block text-xs font-semibold text-gray-500 mb-1.5">Starter questions (one per line)</label>
+          <textarea value={suggestions} onChange={e => setSuggestions(e.target.value)} rows={5}
+            className="w-full border border-gray-200 rounded-xl px-3.5 py-2.5 text-sm text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-red-500 font-mono" />
+        </div>
+        <button onClick={save} disabled={busy}
+          className="bg-red-600 hover:bg-red-700 disabled:bg-gray-200 text-white text-sm font-semibold rounded-xl px-5 py-2.5 transition-colors">
+          {busy ? "Saving…" : "Save chat config"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function BrandingTab() {
   const toast = useToast();
   const { branding: live, saveBranding } = useBranding();
@@ -715,7 +778,7 @@ export default function AdminPage() {
         <div className="flex-1 overflow-y-auto bg-gray-50">
           <div className="max-w-5xl mx-auto px-6 py-8">
             {tab === "users"    && <UserManagementTab />}
-            {tab === "branding" && <BrandingTab />}
+            {tab === "branding" && (<><BrandingTab /><div className="mt-6"><PromptConfigCard /></div></>)}
             {tab === "rbac"     && <RBACTab />}
           </div>
         </div>

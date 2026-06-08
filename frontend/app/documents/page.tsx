@@ -1,5 +1,5 @@
 "use client";
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useState, useRef, useEffect, useCallback, Fragment } from "react";
 import AppShell from "../components/AppShell";
 import { useAuth } from "../components/AuthProvider";
 import { useToast } from "../components/Toast";
@@ -43,6 +43,7 @@ interface Doc {
   error?:   string;
   type?:    "file" | "repo" | "web";
   url?:     string;
+  category?: string;
 }
 
 // ── Shared ─────────────────────────────────────────────────────────────────────
@@ -234,6 +235,19 @@ function ManagementTab({ user }: { user: { role: string } | null }) {
     d.name.toLowerCase().includes(search.toLowerCase())
   );
 
+  // Group sources into collapsible domain folders (TM Forum / ODA / MEF / …)
+  const [collapsedCats, setCollapsedCats] = useState<Set<string>>(new Set());
+  const toggleCat = (c: string) =>
+    setCollapsedCats(s => { const n = new Set(s); n.has(c) ? n.delete(c) : n.add(c); return n; });
+  const CAT_ORDER = ["TM Forum", "ODA", "MEF", "ETSI", "3GPP", "IETF", "Other"];
+  const folderGroups = (() => {
+    const m: Record<string, Doc[]> = {};
+    for (const d of visible) { const c = d.category || "Other"; if (!m[c]) m[c] = []; m[c].push(d); }
+    return Object.keys(m)
+      .sort((a, b) => ((CAT_ORDER.indexOf(a) + 1 || 99) - (CAT_ORDER.indexOf(b) + 1 || 99)) || a.localeCompare(b))
+      .map(c => ({ cat: c, docs: m[c] }));
+  })();
+
   const stats = {
     total:      docs.length,
     indexed:    docs.filter(d => d.status === "indexed").length,
@@ -370,8 +384,20 @@ function ManagementTab({ user }: { user: { role: string } | null }) {
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-50">
-              {visible.map(doc => (
-                <tr key={doc.file} className="hover:bg-gray-50/70 transition-colors group">
+              {folderGroups.map(g => (
+                <Fragment key={g.cat}>
+                  <tr className="bg-gray-50/60 hover:bg-gray-100/60 cursor-pointer select-none" onClick={() => toggleCat(g.cat)}>
+                    <td colSpan={6} className="px-5 py-2.5">
+                      <div className="flex items-center gap-2 text-sm font-semibold text-gray-700">
+                        <svg className={`w-3.5 h-3.5 text-gray-400 transition-transform ${collapsedCats.has(g.cat) ? "" : "rotate-90"}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><polyline points="9 18 15 12 9 6"/></svg>
+                        <svg className="w-4 h-4 text-amber-500" fill="currentColor" viewBox="0 0 24 24"><path d="M10 4H4a2 2 0 00-2 2v12a2 2 0 002 2h16a2 2 0 002-2V8a2 2 0 00-2-2h-8l-2-2z"/></svg>
+                        {g.cat}
+                        <span className="text-xs font-normal text-gray-400">· {g.docs.length} {g.docs.length === 1 ? "source" : "sources"}</span>
+                      </div>
+                    </td>
+                  </tr>
+                  {!collapsedCats.has(g.cat) && g.docs.map(doc => (
+                    <tr key={doc.file} className="hover:bg-gray-50/70 transition-colors group">
                   <td className="px-5 py-4">
                     <div className="flex items-center gap-3">
                       <div className="w-8 h-8 bg-red-50 border border-red-100 rounded-lg flex items-center justify-center flex-shrink-0">
@@ -385,6 +411,11 @@ function ManagementTab({ user }: { user: { role: string } | null }) {
                           {doc.type && doc.type !== "file" && (
                             <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-amber-50 text-amber-700 border border-amber-200 flex-shrink-0 tracking-wide">
                               {doc.type === "repo" ? "GIT REPO" : "WEB"}
+                            </span>
+                          )}
+                          {doc.category && (
+                            <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-blue-50 text-blue-700 border border-blue-200 flex-shrink-0">
+                              {doc.category}
                             </span>
                           )}
                         </div>
@@ -428,6 +459,8 @@ function ManagementTab({ user }: { user: { role: string } | null }) {
                     </div>
                   </td>
                 </tr>
+                  ))}
+                </Fragment>
               ))}
             </tbody>
           </table>

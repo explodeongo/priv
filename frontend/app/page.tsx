@@ -2,9 +2,21 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import AppShell from "./components/AppShell";
 import { useBranding } from "./components/BrandingContext";
+import { useConvos } from "./components/ConversationContext";
 import { loadPrefs } from "./settings/page";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+
+// Auth header for per-user conversation history endpoints.
+function authH(json = false): Record<string, string> {
+  const t = typeof window !== "undefined" ? localStorage.getItem("synaptdi_token") : null;
+  const h: Record<string, string> = {};
+  if (json) h["Content-Type"] = "application/json";
+  if (t) h["Authorization"] = `Bearer ${t}`;
+  return h;
+}
+
+interface Convo { id: string; title: string; count: number; updated: number; }
 
 interface Source {
   name: string;
@@ -181,11 +193,49 @@ export default function Home() {
   const [prefs, setPrefs] = useState({ topK: 5, showSrc: true });
   const [logo, setLogo] = useState<string | undefined>();
   const [scope, setScope] = useState<"all" | "kb" | "docs">("all");
+  const [chatCfg, setChatCfg] = useState<{ placeholder: string; suggestions: string[] }>({
+    placeholder: "Ask about TM Forum APIs, ODA, eTOM, SID...", suggestions: SUGGESTED,
+  });
+  const { activeId, setActiveId, refresh: refreshConvos, loadSignal, consume } = useConvos();
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef  = useRef<HTMLTextAreaElement>(null);
 
+  // React to the sidebar: open a saved chat, or clear for a new one.
+  useEffect(() => {
+    if (!loadSignal) return;
+    if (loadSignal.kind === "new") {
+      setMessages([]); inputRef.current?.focus();
+    } else if (loadSignal.kind === "open") {
+      fetch(`${API}/conversations/${loadSignal.id}`, { headers: authH() })
+        .then(r => (r.ok ? r.json() : null))
+        .then(c => { if (c) setMessages(c.messages || []); })
+        .catch(() => {});
+    }
+    consume();
+  }, [loadSignal, consume]);
+
+  const persistConvo = async (msgs: Message[]) => {
+    if (typeof window !== "undefined" && !localStorage.getItem("synaptdi_token")) return;
+    const title = (msgs.find(m => m.role === "user")?.content || "New chat").slice(0, 60);
+    try {
+      if (activeId) {
+        await fetch(`${API}/conversations/${activeId}`, {
+          method: "PUT", headers: authH(true), body: JSON.stringify({ messages: msgs, title }) });
+      } else {
+        const r = await fetch(`${API}/conversations`, {
+          method: "POST", headers: authH(true), body: JSON.stringify({ messages: msgs, title }) });
+        if (r.ok) setActiveId((await r.json()).id);
+      }
+      refreshConvos();
+    } catch {}
+  };
+
   useEffect(() => {
     fetch(`${API}/stats`).then(r => r.json()).then(setStats).catch(() => {});
+    fetch(`${API}/chat-config`).then(r => r.json())
+      .then(c => setChatCfg({ placeholder: c.placeholder || "Ask a question…",
+                              suggestions: (c.suggestions?.length ? c.suggestions : SUGGESTED) }))
+      .catch(() => {});
     const p = loadPrefs();
     setPrefs({ topK: p.topK, showSrc: p.showSrc });
     try { const l = localStorage.getItem("synaptdi_logo"); if (l) setLogo(l); } catch {}
@@ -202,6 +252,7 @@ export default function Home() {
     // Recent turns (before this one) so follow-ups like "what about its events?" work.
     const history = messages.filter(m => m.content && !m.error)
                             .slice(-6).map(m => ({ role: m.role, content: m.content }));
+    const prior = messages;   // existing turns, persisted alongside the new exchange
     setInput("");
     // Add the user turn + an empty assistant bubble we stream into.
     setMessages(prev => [...prev, { role: "user", content: question }, { role: "assistant", content: "" }]);
@@ -216,6 +267,8 @@ export default function Home() {
       return copy;
     });
     let acc = "";   // full answer so far (set, never appended-in-place)
+    let doneSources: Source[] | undefined;
+    let doneLatency: number | undefined;
 
     try {
       const res = await fetch(`${API}/query/stream`, {
@@ -240,10 +293,14 @@ export default function Home() {
           let evt: any;
           try { evt = JSON.parse(line); } catch { continue; }
           if (evt.type === "token")      { acc += evt.text; setLast({ content: acc }); }
-          else if (evt.type === "done")  setLast({ sources: evt.sources, latency_ms: evt.latency_ms });
+          else if (evt.type === "done")  { doneSources = evt.sources; doneLatency = evt.latency_ms; setLast({ sources: evt.sources, latency_ms: evt.latency_ms }); }
           else if (evt.type === "error") { acc = evt.text; setLast({ content: acc, error: true }); }
         }
       }
+      // Save to history — creates a conversation on the first message, updates after.
+      persistConvo([...prior,
+        { role: "user", content: question },
+        { role: "assistant", content: acc, sources: doneSources, latency_ms: doneLatency }]);
     } catch (e: any) {
       const msg = e.name === "TimeoutError"
         ? "Request timed out. The model may still be loading — try again in 30 seconds."
@@ -253,7 +310,7 @@ export default function Home() {
       setLoading(false);
       inputRef.current?.focus();
     }
-  }, [loading, scope, prefs, messages]);
+  }, [loading, scope, prefs, messages, activeId]);
 
   function handleKey(e: React.KeyboardEvent) {
     if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); ask(input); }
@@ -313,7 +370,7 @@ export default function Home() {
                   )}
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 w-full max-w-2xl">
-                  {SUGGESTED.map((q, i) => (
+                  {chatCfg.suggestions.map((q, i) => (
                     <button key={i} onClick={() => ask(q)}
                       className="text-left text-sm text-gray-600 bg-white hover:bg-red-50 hover:text-red-700 border border-gray-200 hover:border-red-200 hover:shadow-sm rounded-xl px-4 py-3.5 transition-all">
                       <span className="text-red-500 mr-2 text-xs">→</span>{q}
@@ -415,7 +472,7 @@ export default function Home() {
           <div className="max-w-3xl mx-auto flex items-end gap-3">
             <textarea ref={inputRef} value={input}
               onChange={e => setInput(e.target.value)} onKeyDown={handleKey}
-              placeholder="Ask about TM Forum APIs, ODA, eTOM, SID..." rows={1} disabled={loading}
+              placeholder={chatCfg.placeholder} rows={1} disabled={loading}
               className="flex-1 resize-none border border-gray-200 rounded-xl px-4 py-3 text-sm text-gray-800 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-red-500 focus:border-transparent bg-gray-50 disabled:opacity-50"
               style={{ maxHeight: "120px" }}
               onInput={e => {
