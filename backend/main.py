@@ -880,28 +880,26 @@ def documents_library():
                     display = display[: -len(ext)]
                     break
             display = display.replace("-", " ").replace("_", " ")
-            file_stats[fname] = {"file": fname, "name": display,
-                                 "folder": folder, "chunks": 0, "status": "indexed"}
+            file_stats[fname] = {"file": fname, "name": display, "folder": folder,
+                                 "category": _kb_category(meta.get("spec_id", ""), fname, folder),
+                                 "chunks": 0, "status": "indexed"}
         file_stats[fname]["chunks"] += 1
 
-    # Group by folder
+    # Group by domain category (TM Forum / ODA / MEF / …) — same folders as user sources
     groups: dict[str, dict] = {}
     for stat in file_stats.values():
-        g = stat["folder"]
+        g = stat["category"]
         if g not in groups:
-            # Friendly folder display name
-            friendly = g.replace("_", " ").replace("-", " ").title()
-            groups[g] = {"id": g, "name": friendly, "files": 0,
-                         "chunks": 0, "documents": []}
+            groups[g] = {"id": g, "name": g, "files": 0, "chunks": 0, "documents": []}
         groups[g]["files"]  += 1
         groups[g]["chunks"] += stat["chunks"]
         groups[g]["documents"].append(stat)
 
-    # Sort groups by chunk count; within each group sort docs by chunks desc
-    sorted_groups = sorted(groups.values(), key=lambda x: -x["chunks"])
+    CAT_ORDER = ["TM Forum", "ODA", "MEF", "ETSI", "3GPP", "IETF", "Other"]
+    sorted_groups = sorted(groups.values(),
+                           key=lambda x: CAT_ORDER.index(x["name"]) if x["name"] in CAT_ORDER else 99)
     for grp in sorted_groups:
-        grp["documents"] = sorted(grp["documents"],
-                                  key=lambda x: -x["chunks"])[:30]  # top 30 per group
+        grp["documents"] = sorted(grp["documents"], key=lambda x: -x["chunks"])[:200]
 
     return {
         "total_files":  len(file_stats),
@@ -910,7 +908,7 @@ def documents_library():
     }
 
 def _categorize(*hints) -> str:
-    """Best-effort domain bucket for a source, derived from its name / url / id."""
+    """Best-effort domain bucket for a USER-ADDED source (defaults to 'Other')."""
     blob = " ".join(h for h in hints if h).lower()
     if "tmforum" in blob or "tm forum" in blob or "tmf" in blob: return "TM Forum"
     if "oda" in blob:                    return "ODA"
@@ -919,6 +917,17 @@ def _categorize(*hints) -> str:
     if "3gpp" in blob:                   return "3GPP"
     if "ietf" in blob or "rfc" in blob:  return "IETF"
     return "Other"
+
+def _kb_category(spec_id: str, file: str, folder: str) -> str:
+    """Domain bucket for a base Knowledge Base doc. Defaults to 'TM Forum' since
+    the bundled KB is TM Forum-sourced; splits out ODA/MEF/etc. when detectable."""
+    blob = f"{spec_id} {file} {folder}".lower()
+    if "oda" in blob:                    return "ODA"
+    if "mef" in blob:                    return "MEF"
+    if "etsi" in blob or "nfv" in blob:  return "ETSI"
+    if "3gpp" in blob:                   return "3GPP"
+    if "ietf" in blob or "rfc" in blob:  return "IETF"
+    return "TM Forum"
 
 @app.get("/documents")
 def list_documents():

@@ -49,14 +49,31 @@ function stripMd(text: string) {
   return text.replace(/\*\*/g, "").replace(/`/g, "").replace(/#{1,3}\s/g, "").trim();
 }
 
-// Render answer markdown
+// Render answer markdown (handles fenced ``` code blocks, headings, bullets, inline code/bold)
 function renderMarkdown(text: string) {
   const lines = text.split("\n");
   const nodes: React.ReactNode[] = [];
   let key = 0;
+  let i = 0;
 
-  for (const line of lines) {
-    if (!line.trim()) { nodes.push(<div key={key++} className="h-2" />); continue; }
+  while (i < lines.length) {
+    const line = lines[i];
+
+    // Fenced code block ```
+    if (line.trim().startsWith("```")) {
+      const code: string[] = [];
+      i++;
+      while (i < lines.length && !lines[i].trim().startsWith("```")) { code.push(lines[i]); i++; }
+      i++; // skip closing fence
+      nodes.push(
+        <pre key={key++} className="my-2 bg-gray-900 text-gray-100 rounded-lg p-3 overflow-x-auto text-xs font-mono leading-relaxed">
+          <code>{code.join("\n")}</code>
+        </pre>
+      );
+      continue;
+    }
+
+    if (!line.trim()) { nodes.push(<div key={key++} className="h-2" />); i++; continue; }
 
     if (line.startsWith("## ") || line.startsWith("### ")) {
       nodes.push(<p key={key++} className="font-semibold text-gray-900 mt-3 mb-1">{line.replace(/^#{2,3}\s/, "")}</p>);
@@ -68,16 +85,16 @@ function renderMarkdown(text: string) {
         </div>
       );
     } else if (line.match(/^\s{2,}[\+\-\*]\s/)) {
-      const txt = line.replace(/^\s+[\+\-\*]\s/, "");
       nodes.push(
         <div key={key++} className="flex gap-2 my-0.5 ml-6">
           <span className="text-gray-400 flex-shrink-0">◦</span>
-          <code className="text-xs font-mono bg-gray-100 text-red-700 px-1.5 py-0.5 rounded">{txt}</code>
+          <span>{inlineFormat(line.replace(/^\s+[\+\-\*]\s/, ""))}</span>
         </div>
       );
     } else {
       nodes.push(<p key={key++} className="my-0.5 leading-relaxed">{inlineFormat(line)}</p>);
     }
+    i++;
   }
   return nodes;
 }
@@ -196,9 +213,12 @@ export default function Home() {
   const [chatCfg, setChatCfg] = useState<{ placeholder: string; suggestions: string[] }>({
     placeholder: "Ask about TM Forum APIs, ODA, eTOM, SID...", suggestions: SUGGESTED,
   });
+  const [copiedIdx, setCopiedIdx] = useState<number | null>(null);
   const { activeId, setActiveId, refresh: refreshConvos, loadSignal, consume } = useConvos();
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef  = useRef<HTMLTextAreaElement>(null);
+  const abortRef  = useRef<AbortController | null>(null);
+  const stoppedRef = useRef(false);
 
   // React to the sidebar: open a saved chat, or clear for a new one.
   useEffect(() => {
@@ -247,35 +267,36 @@ export default function Home() {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, loading]);
 
-  const ask = useCallback(async (question: string) => {
-    if (!question.trim() || loading) return;
-    // Recent turns (before this one) so follow-ups like "what about its events?" work.
-    const history = messages.filter(m => m.content && !m.error)
-                            .slice(-6).map(m => ({ role: m.role, content: m.content }));
-    const prior = messages;   // existing turns, persisted alongside the new exchange
-    setInput("");
-    // Add the user turn + an empty assistant bubble we stream into.
-    setMessages(prev => [...prev, { role: "user", content: question }, { role: "assistant", content: "" }]);
+  // Core streaming routine — `prior` is the explicit message history (so it works
+  // for both a new question and a regenerate without stale-closure issues).
+  const runStream = useCallback(async (question: string, prior: Message[]) => {
     setLoading(true);
+    stoppedRef.current = false;
+    const controller = new AbortController();
+    abortRef.current = controller;
+    const timeout = setTimeout(() => controller.abort(), 180000);
+    const history = prior.filter(m => m.content && !m.error)
+                         .slice(-6).map(m => ({ role: m.role, content: m.content }));
 
-    // Immutably patch the trailing assistant message. Pure updater (no in-place
-    // mutation) so React StrictMode's double-invocation can't double the text.
     const setLast = (patch: Partial<Message>) => setMessages(prev => {
       const copy = [...prev];
       const i = copy.length - 1;
       if (i >= 0 && copy[i].role === "assistant") copy[i] = { ...copy[i], ...patch };
       return copy;
     });
-    let acc = "";   // full answer so far (set, never appended-in-place)
+    let acc = "";
     let doneSources: Source[] | undefined;
     let doneLatency: number | undefined;
+    const save = () => persistConvo([...prior,
+      { role: "user", content: question },
+      { role: "assistant", content: acc, sources: doneSources, latency_ms: doneLatency }]);
 
     try {
       const res = await fetch(`${API}/query/stream`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ question, top_k: prefs.topK, scope, history }),
-        signal: AbortSignal.timeout(180000),
+        signal: controller.signal,
       });
       if (!res.ok || !res.body) throw new Error(`API error ${res.status}`);
 
@@ -287,7 +308,7 @@ export default function Home() {
         if (done) break;
         buf += decoder.decode(value, { stream: true });
         const lines = buf.split("\n");
-        buf = lines.pop() || "";              // keep the last partial line
+        buf = lines.pop() || "";
         for (const line of lines) {
           if (!line.trim()) continue;
           let evt: any;
@@ -297,20 +318,48 @@ export default function Home() {
           else if (evt.type === "error") { acc = evt.text; setLast({ content: acc, error: true }); }
         }
       }
-      // Save to history — creates a conversation on the first message, updates after.
-      persistConvo([...prior,
-        { role: "user", content: question },
-        { role: "assistant", content: acc, sources: doneSources, latency_ms: doneLatency }]);
+      save();
     } catch (e: any) {
-      const msg = e.name === "TimeoutError"
-        ? "Request timed out. The model may still be loading — try again in 30 seconds."
-        : `Could not reach SynaptDI API: ${e.message}. Make sure uvicorn is running on port 8000.`;
-      setLast({ content: msg, error: true });
+      if (e.name === "AbortError" && stoppedRef.current) {
+        setLast({ content: acc ? acc + "\n\n_(stopped)_" : "_(stopped)_" });
+        if (acc) save();
+      } else if (e.name === "AbortError" || e.name === "TimeoutError") {
+        setLast({ content: "Request timed out. The model may still be loading — try again in 30 seconds.", error: true });
+      } else {
+        setLast({ content: `Could not reach SynaptDI API: ${e.message}. Make sure uvicorn is running on port 8000.`, error: true });
+      }
     } finally {
+      clearTimeout(timeout);
+      abortRef.current = null;
       setLoading(false);
       inputRef.current?.focus();
     }
-  }, [loading, scope, prefs, messages, activeId]);
+  }, [scope, prefs, activeId]);
+
+  const ask = useCallback((question: string) => {
+    if (!question.trim() || loading) return;
+    setInput("");
+    const prior = messages;
+    setMessages(prev => [...prev, { role: "user", content: question }, { role: "assistant", content: "" }]);
+    runStream(question, prior);
+  }, [loading, messages, runStream]);
+
+  const regenerate = useCallback(() => {
+    if (loading) return;
+    let idx = -1;
+    for (let i = messages.length - 1; i >= 0; i--) if (messages[i].role === "user") { idx = i; break; }
+    if (idx < 0) return;
+    const q = messages[idx].content;
+    const base = messages.slice(0, idx);
+    setMessages([...base, { role: "user", content: q }, { role: "assistant", content: "" }]);
+    runStream(q, base);
+  }, [loading, messages, runStream]);
+
+  const stop = () => { stoppedRef.current = true; abortRef.current?.abort(); };
+
+  const copyMsg = (i: number, text: string) => {
+    try { navigator.clipboard?.writeText(stripMd(text)); setCopiedIdx(i); setTimeout(() => setCopiedIdx(null), 1500); } catch {}
+  };
 
   function handleKey(e: React.KeyboardEvent) {
     if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); ask(input); }
@@ -446,6 +495,25 @@ export default function Home() {
                       )}
                     </div>
                   )}
+
+                  {msg.role === "assistant" && !msg.error && msg.content && (
+                    <div className="mt-2 flex items-center gap-1">
+                      <button onClick={() => copyMsg(i, msg.content)} title="Copy answer"
+                        className="text-xs text-gray-400 hover:text-gray-700 px-1.5 py-1 rounded hover:bg-gray-100 transition-colors flex items-center gap-1">
+                        {copiedIdx === i ? (
+                          <><svg className="w-3.5 h-3.5 text-green-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><polyline points="20 6 9 17 4 12"/></svg>Copied</>
+                        ) : (
+                          <><svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>Copy</>
+                        )}
+                      </button>
+                      {i === messages.length - 1 && !loading && (
+                        <button onClick={regenerate} title="Regenerate answer"
+                          className="text-xs text-gray-400 hover:text-gray-700 px-1.5 py-1 rounded hover:bg-gray-100 transition-colors flex items-center gap-1">
+                          <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 11-2.12-9.36L23 10"/></svg>Regenerate
+                        </button>
+                      )}
+                    </div>
+                  )}
                 </div>
               </div>
             ))}
@@ -481,10 +549,17 @@ export default function Home() {
                 t.style.height = Math.min(t.scrollHeight, 120) + "px";
               }}
             />
-            <button onClick={() => ask(input)} disabled={!input.trim() || loading}
-              className="flex-shrink-0 bg-red-600 hover:bg-red-700 disabled:bg-gray-200 disabled:cursor-not-allowed text-white rounded-xl px-5 py-3 text-sm font-semibold transition-colors shadow-sm">
-              {loading ? "···" : "Ask →"}
-            </button>
+            {loading ? (
+              <button onClick={stop} title="Stop generating"
+                className="flex-shrink-0 bg-gray-800 hover:bg-gray-900 text-white rounded-xl px-5 py-3 text-sm font-semibold transition-colors shadow-sm flex items-center gap-2">
+                <span className="w-2.5 h-2.5 bg-white rounded-[3px]" /> Stop
+              </button>
+            ) : (
+              <button onClick={() => ask(input)} disabled={!input.trim()}
+                className="flex-shrink-0 bg-red-600 hover:bg-red-700 disabled:bg-gray-200 disabled:cursor-not-allowed text-white rounded-xl px-5 py-3 text-sm font-semibold transition-colors shadow-sm">
+                Ask →
+              </button>
+            )}
           </div>
           <p className="max-w-3xl mx-auto mt-2 text-center text-xs text-gray-400">
             Answers grounded in TM Forum docs · Click any source to view chunk + GitHub link · SynaptDI — Enterprise domains at your fingertips
