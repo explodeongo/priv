@@ -2,11 +2,12 @@
   "name": "synaptdi",
   "displayName": "SynaptDI — Domain Assistant",
   "description": "Ask TM Forum / domain questions and get cited answers without leaving VS Code.",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "publisher": "dibuai",
+  "repository": { "type": "git", "url": "https://github.com/dibuAI/SynaptDI.git" },
   "engines": { "vscode": "^1.75.0" },
   "categories": ["Other", "Machine Learning"],
-  "activationEvents": [],
+  "activationEvents": ["onView:synaptdi.chat"],
   "main": "./out/extension.js",
   "contributes": {
     "viewsContainers": {
@@ -20,8 +21,28 @@
       ]
     },
     "commands": [
-      { "command": "synaptdi.ask", "title": "SynaptDI: Ask a question" }
+      { "command": "synaptdi.ask", "title": "Ask a question", "category": "SynaptDI", "icon": "$(comment-discussion)" },
+      { "command": "synaptdi.explain", "title": "Explain Selected Code", "category": "SynaptDI", "icon": "$(book)" },
+      { "command": "synaptdi.validate", "title": "Validate Against TM Forum Spec", "category": "SynaptDI", "icon": "$(checklist)" },
+      { "command": "synaptdi.generateClient", "title": "Generate API Client", "category": "SynaptDI", "icon": "$(code)" },
+      { "command": "synaptdi.newChat", "title": "New Chat", "category": "SynaptDI", "icon": "$(add)" }
     ],
+    "submenus": [
+      { "id": "synaptdi.editor", "label": "SynaptDI" }
+    ],
+    "menus": {
+      "editor/context": [
+        { "submenu": "synaptdi.editor", "group": "navigation@9", "when": "editorTextFocus" }
+      ],
+      "synaptdi.editor": [
+        { "command": "synaptdi.explain", "group": "1_synaptdi@1" },
+        { "command": "synaptdi.validate", "group": "1_synaptdi@2" },
+        { "command": "synaptdi.generateClient", "group": "1_synaptdi@3" }
+      ],
+      "view/title": [
+        { "command": "synaptdi.newChat", "when": "view == synaptdi.chat", "group": "navigation@1" }
+      ]
+    },
     "configuration": {
       "title": "SynaptDI",
       "properties": {
