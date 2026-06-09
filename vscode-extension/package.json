@@ -1,0 +1,51 @@
+{
+  "name": "synaptdi",
+  "displayName": "SynaptDI — Domain Assistant",
+  "description": "Ask TM Forum / domain questions and get cited answers without leaving VS Code.",
+  "version": "0.1.0",
+  "publisher": "dibuai",
+  "engines": { "vscode": "^1.75.0" },
+  "categories": ["Other", "Machine Learning"],
+  "activationEvents": [],
+  "main": "./out/extension.js",
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        { "id": "synaptdi", "title": "SynaptDI", "icon": "media/icon.svg" }
+      ]
+    },
+    "views": {
+      "synaptdi": [
+        { "id": "synaptdi.chat", "name": "Ask SynaptDI", "type": "webview" }
+      ]
+    },
+    "commands": [
+      { "command": "synaptdi.ask", "title": "SynaptDI: Ask a question" }
+    ],
+    "configuration": {
+      "title": "SynaptDI",
+      "properties": {
+        "synaptdi.apiUrl": {
+          "type": "string",
+          "default": "http://localhost:8000",
+          "description": "Base URL of the SynaptDI backend."
+        },
+        "synaptdi.scope": {
+          "type": "string",
+          "enum": ["all", "kb", "docs"],
+          "default": "all",
+          "description": "Search scope: everything, knowledge base only, or your documents only."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "vscode:prepublish": "npm run compile"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.75.0",
+    "typescript": "^5.4.0"
+  }
+}

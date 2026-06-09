@@ -73,6 +73,35 @@ function renderMarkdown(text: string) {
       continue;
     }
 
+    // Markdown table: header row + |---| separator + body rows
+    if (line.includes("|") && i + 1 < lines.length &&
+        /^\s*\|?[\s:|-]+\|?\s*$/.test(lines[i + 1]) && lines[i + 1].includes("-")) {
+      const parseRow = (l: string) => l.trim().replace(/^\||\|$/g, "").split("|").map(c => c.trim());
+      const header = parseRow(line);
+      i += 2; // skip header + separator
+      const rows: string[][] = [];
+      while (i < lines.length && lines[i].includes("|") && lines[i].trim()) { rows.push(parseRow(lines[i])); i++; }
+      nodes.push(
+        <div key={key++} className="my-2 overflow-x-auto">
+          <table className="text-xs border-collapse">
+            <thead>
+              <tr>{header.map((h, hi) => (
+                <th key={hi} className="border border-gray-200 bg-gray-50 px-2.5 py-1.5 text-left font-semibold text-gray-700 whitespace-nowrap">{inlineFormat(h)}</th>
+              ))}</tr>
+            </thead>
+            <tbody>
+              {rows.map((r, ri) => (
+                <tr key={ri}>{r.map((c, ci) => (
+                  <td key={ci} className="border border-gray-200 px-2.5 py-1.5 text-gray-700 align-top">{inlineFormat(c)}</td>
+                ))}</tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      );
+      continue;
+    }
+
     if (!line.trim()) { nodes.push(<div key={key++} className="h-2" />); i++; continue; }
 
     if (line.startsWith("## ") || line.startsWith("### ")) {
@@ -214,6 +243,7 @@ export default function Home() {
     placeholder: "Ask about TM Forum APIs, ODA, eTOM, SID...", suggestions: SUGGESTED,
   });
   const [copiedIdx, setCopiedIdx] = useState<number | null>(null);
+  const [feedbackIdx, setFeedbackIdx] = useState<Record<number, string>>({});
   const { activeId, setActiveId, refresh: refreshConvos, loadSignal, consume } = useConvos();
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef  = useRef<HTMLTextAreaElement>(null);
@@ -359,6 +389,13 @@ export default function Home() {
 
   const copyMsg = (i: number, text: string) => {
     try { navigator.clipboard?.writeText(stripMd(text)); setCopiedIdx(i); setTimeout(() => setCopiedIdx(null), 1500); } catch {}
+  };
+
+  const sendFeedback = (i: number, rating: "up" | "down") => {
+    const q = i > 0 && messages[i - 1]?.role === "user" ? messages[i - 1].content : "";
+    const sources = (messages[i].sources || []).map(s => s.name);
+    fetch(`${API}/feedback`, { method: "POST", headers: authH(true), body: JSON.stringify({ rating, question: q, sources }) }).catch(() => {});
+    setFeedbackIdx(prev => ({ ...prev, [i]: rating }));
   };
 
   function handleKey(e: React.KeyboardEvent) {
@@ -512,6 +549,11 @@ export default function Home() {
                           <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 11-2.12-9.36L23 10"/></svg>Regenerate
                         </button>
                       )}
+                      <span className="mx-1 w-px h-3.5 bg-gray-200" />
+                      <button onClick={() => sendFeedback(i, "up")} title="Helpful"
+                        className={`text-sm px-1 py-0.5 rounded hover:bg-gray-100 transition-colors ${feedbackIdx[i] === "up" ? "opacity-100" : "opacity-50 hover:opacity-100"}`}>👍</button>
+                      <button onClick={() => sendFeedback(i, "down")} title="Not helpful"
+                        className={`text-sm px-1 py-0.5 rounded hover:bg-gray-100 transition-colors ${feedbackIdx[i] === "down" ? "opacity-100" : "opacity-50 hover:opacity-100"}`}>👎</button>
                     </div>
                   )}
                 </div>

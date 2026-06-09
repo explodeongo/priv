@@ -22,6 +22,11 @@ frontend/.next/
 frontend/out/
 frontend/.env*.local
 
+# VS Code extension build artifacts
+vscode-extension/node_modules/
+vscode-extension/out/
+vscode-extension/*.vsix
+
 # ───────── Logs / OS / editor junk ─────────
 *.log
 .DS_Store

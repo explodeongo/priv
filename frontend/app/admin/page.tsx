@@ -24,7 +24,7 @@ function usePageTitle(t: string) {
 }
 
 // ── Types ─────────────────────────────────────────────────────────────────────
-type AdminTab   = "users" | "branding" | "rbac";
+type AdminTab   = "users" | "branding" | "rbac" | "analytics";
 type UserRole   = "admin" | "analyst" | "viewer";
 type UserStatus = "active" | "away" | "inactive";
 
@@ -321,6 +321,87 @@ const PRESET_COLORS = [
   { name: "Amber Gold",   hex: "#d97706" },
   { name: "Midnight",     hex: "#0f172a" },
 ];
+
+function AnalyticsTab() {
+  const toast = useToast();
+  const [data, setData] = useState<any>(null);
+  const [refreshing, setRefreshing] = useState(false);
+
+  useEffect(() => {
+    fetch(`${API}/analytics`, { headers: authHeaders() }).then(r => (r.ok ? r.json() : null)).then(setData).catch(() => {});
+  }, []);
+
+  const refreshKB = async () => {
+    if (!confirm("Re-pull all source repos and rebuild the index? This is heavy — best run off-peak.")) return;
+    setRefreshing(true);
+    try {
+      const r = await fetch(`${API}/admin/refresh-kb`, { method: "POST", headers: authHeaders() });
+      if (!r.ok) throw new Error();
+      toast("Knowledge base refresh started — running in the background");
+    } catch { toast("Failed to start refresh", "error"); }
+    finally { setRefreshing(false); }
+  };
+
+  if (!data) return <div className="text-sm text-gray-400 py-12 text-center">Loading analytics…</div>;
+  const fb = data.feedback || { up: 0, down: 0 };
+  const rate = data.total_queries ? Math.round((100 * data.answered) / data.total_queries) : 0;
+  const Stat = ({ label, val, sub }: { label: string; val: any; sub?: string }) => (
+    <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-5">
+      <div className="text-2xl font-bold text-gray-900">{val}</div>
+      <div className="text-xs text-gray-500 mt-1">{label}</div>
+      {sub && <div className="text-[11px] text-gray-400 mt-0.5">{sub}</div>}
+    </div>
+  );
+
+  return (
+    <div className="space-y-6">
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        <Stat label="Total queries" val={data.total_queries} />
+        <Stat label="Answered" val={data.answered} sub={`${rate}% answer rate`} />
+        <Stat label="👍 Helpful" val={fb.up} />
+        <Stat label="👎 Not helpful" val={fb.down} />
+      </div>
+
+      <div className="grid md:grid-cols-2 gap-6">
+        <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
+          <div className="px-6 py-4 border-b border-gray-100"><h2 className="text-sm font-semibold text-gray-900">Top specs queried</h2></div>
+          <div className="p-4 space-y-1.5">
+            {(data.top_sources || []).length === 0 && <p className="text-xs text-gray-400">No queries yet.</p>}
+            {(data.top_sources || []).map((s: any, i: number) => (
+              <div key={i} className="flex items-center justify-between text-sm">
+                <span className="text-gray-700 truncate mr-2">{s.name}</span>
+                <span className="text-gray-400 font-medium flex-shrink-0">{s.hits}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+        <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
+          <div className="px-6 py-4 border-b border-gray-100">
+            <h2 className="text-sm font-semibold text-gray-900">Knowledge gaps</h2>
+            <p className="text-xs text-gray-400 mt-0.5">Questions we couldn't answer — candidates to ingest</p>
+          </div>
+          <div className="p-4 space-y-1.5 max-h-72 overflow-y-auto">
+            {(data.gaps || []).length === 0 && <p className="text-xs text-gray-400">No gaps logged 🎉</p>}
+            {(data.gaps || []).map((g: any, i: number) => (
+              <div key={i} className="text-sm text-gray-600 truncate">• {g.q}</div>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-5 flex items-center justify-between gap-4">
+        <div>
+          <h2 className="text-sm font-semibold text-gray-900">Refresh knowledge base</h2>
+          <p className="text-xs text-gray-400 mt-0.5">Re-pull all source repos and rebuild the index. Heavy — run off-peak (or cron this endpoint).</p>
+        </div>
+        <button onClick={refreshKB} disabled={refreshing}
+          className="flex-shrink-0 bg-red-600 hover:bg-red-700 disabled:bg-gray-200 text-white text-sm font-semibold rounded-xl px-5 py-2.5 transition-colors">
+          {refreshing ? "Starting…" : "Refresh now"}
+        </button>
+      </div>
+    </div>
+  );
+}
 
 function PromptConfigCard() {
   const toast = useToast();
@@ -753,6 +834,7 @@ export default function AdminPage() {
     { id: "users",    label: "User Management" },
     { id: "branding", label: "Branding" },
     { id: "rbac",     label: "RBAC" },
+    { id: "analytics", label: "Analytics" },
   ];
 
   return (
@@ -780,6 +862,7 @@ export default function AdminPage() {
             {tab === "users"    && <UserManagementTab />}
             {tab === "branding" && (<><BrandingTab /><div className="mt-6"><PromptConfigCard /></div></>)}
             {tab === "rbac"     && <RBACTab />}
+            {tab === "analytics" && <AnalyticsTab />}
           </div>
         </div>
       </div>

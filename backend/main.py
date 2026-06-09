@@ -60,6 +60,25 @@ BRANDING_FILE = STORAGE_DIR / "branding.json"
 USERS_FILE    = STORAGE_DIR / "users.json"
 CHATCFG_FILE  = STORAGE_DIR / "chat_config.json"
 CONVOS_DIR    = STORAGE_DIR / "conversations"; CONVOS_DIR.mkdir(exist_ok=True)
+ANALYTICS_FILE = STORAGE_DIR / "analytics.json"
+FEEDBACK_FILE  = STORAGE_DIR / "feedback.json"
+_analytics_lock = threading.Lock()
+
+def _log_query(question: str, answered: bool):
+    """Track query volume + 'knowledge gaps' (questions we couldn't answer)."""
+    try:
+        with _analytics_lock:
+            a = json.loads(ANALYTICS_FILE.read_text()) if ANALYTICS_FILE.exists() else {}
+            a["total"] = a.get("total", 0) + 1
+            if answered:
+                a["answered"] = a.get("answered", 0) + 1
+            else:
+                gaps = a.get("gaps", [])
+                gaps.insert(0, {"q": question[:200], "ts": int(time.time())})
+                a["gaps"] = gaps[:50]
+            ANALYTICS_FILE.write_text(json.dumps(a))
+    except Exception:
+        pass
 
 # ── In-memory state ────────────────────────────────────────────────────────────
 PROCESSING_STATUS: dict[str, dict] = {}   # file → {status, chunks, error?}
@@ -286,10 +305,47 @@ def make_chunk_id(file_name: str, idx: int) -> str:
 # ── File text extraction ───────────────────────────────────────────────────────
 def extract_text(content: bytes, file_name: str) -> str:
     name = file_name.lower()
+    from io import BytesIO
     if name.endswith(".pdf"):
         import fitz
         doc = fitz.open(stream=content, filetype="pdf")
         return "\n".join(page.get_text() for page in doc)
+    if name.endswith(".docx"):
+        import docx
+        d = docx.Document(BytesIO(content))
+        parts = [p.text for p in d.paragraphs if p.text.strip()]
+        for tbl in d.tables:
+            for row in tbl.rows:
+                cells = [c.text.strip() for c in row.cells]
+                if any(cells):
+                    parts.append(" | ".join(cells))
+        return "\n".join(parts)
+    if name.endswith(".xlsx"):
+        import openpyxl
+        wb = openpyxl.load_workbook(BytesIO(content), read_only=True, data_only=True)
+        parts = []
+        for ws in wb.worksheets:
+            parts.append(f"# Sheet: {ws.title}")
+            for row in ws.iter_rows(values_only=True):
+                cells = [str(c) for c in row if c is not None]
+                if cells:
+                    parts.append(" | ".join(cells))
+        return "\n".join(parts)
+    if name.endswith(".pptx"):
+        import pptx
+        prs = pptx.Presentation(BytesIO(content))
+        parts = []
+        for i, slide in enumerate(prs.slides, 1):
+            parts.append(f"# Slide {i}")
+            for shape in slide.shapes:
+                if shape.has_text_frame and shape.text_frame.text.strip():
+                    parts.append(shape.text_frame.text)
+                if shape.has_table:
+                    for row in shape.table.rows:
+                        cells = [c.text.strip() for c in row.cells]
+                        if any(cells):
+                            parts.append(" | ".join(cells))
+        return "\n".join(parts)
     return content.decode("utf-8", errors="ignore")
 
 # ── Uploads JSON helpers ───────────────────────────────────────────────────────
@@ -538,7 +594,7 @@ def add_web_source(req: WebReq, background_tasks: BackgroundTasks, _admin: dict 
 # For open-ended / non-spec queries we keep an out-of-domain escape hatch,
 # because nomic-embed-text distances can't reliably separate in-domain from
 # out-of-domain (an off-topic question can still land at a low distance).
-_PROMPT_INSTRUCTIONS = """Answer the QUESTION using only the CONTEXT below. Each source is labelled with its number and title. Be specific, and name the source you actually used when you state a fact. Use bullet points for lists of fields, events, or steps. The context may include several related sources — synthesize across the chunks and focus on exactly what the question asks.
+_PROMPT_INSTRUCTIONS = """Answer the QUESTION using only the CONTEXT below. Each source is labelled with its number and title. Be specific, and name the source you actually used when you state a fact. When you list fields, attributes, query parameters, or events, present them as a Markdown table — e.g. `| Field | Required | Description |` — marking each as mandatory or optional. For comparisons (e.g. two specs), use a Markdown table with one column per spec. When the user asks for an example request or how to call an operation, include a fenced code block with a concrete example (curl by default, or the language requested) built from the real path and fields in the context. Otherwise use short bullet points. The context may include several related sources — synthesize across the chunks and focus on exactly what the question asks.
 
 When asked for the mandatory/required fields of an entity, read them from that entity's MAIN resource schema or its _Create schema (e.g. the ProductOrder or ProductOrder_Create schema) — NOT from a reference (*Ref) or *_Update schema. Give a direct, confident answer; do not say information is missing if a relevant source is present.
 
@@ -790,6 +846,7 @@ def query(req: QueryRequest):
     except Exception as e: raise HTTPException(503, f"Retrieval failed: {e}")
 
     if not chunks:
+        _log_query(req.question, False)
         return QueryResponse(answer=empty, sources=[],
                              latency_ms=int((time.time()-start)*1000), chunks_retrieved=0)
 
@@ -798,9 +855,11 @@ def query(req: QueryRequest):
 
     # If the LLM used its exact "no info" escape hatch, return no sources.
     if answer.lower().strip().startswith(NO_INFO_PREFIX):
+        _log_query(req.question, False)
         return QueryResponse(answer=answer, sources=[],
                              latency_ms=int((time.time()-start)*1000), chunks_retrieved=0)
 
+    _log_query(req.question, True)
     return QueryResponse(answer=answer, sources=build_sources(chunks),
                          latency_ms=int((time.time()-start)*1000), chunks_retrieved=len(chunks))
 
@@ -822,6 +881,7 @@ def query_stream(req: QueryRequest):
 
     def gen():
         if not chunks:
+            _log_query(req.question, False)
             yield json.dumps({"type": "token", "text": empty}) + "\n"
             yield json.dumps({"type": "done", "sources": [],
                               "latency_ms": int((time.time() - start) * 1000),
@@ -829,13 +889,14 @@ def query_stream(req: QueryRequest):
             return
         acc = ""
         try:
-            for frag in stream_ollama(build_prompt(req.question, chunks, guarded=not confident)):
+            for frag in stream_ollama(build_prompt(req.question, chunks, guarded=not confident, history=req.history)):
                 acc += frag
                 yield json.dumps({"type": "token", "text": frag}) + "\n"
         except Exception as e:
             yield json.dumps({"type": "error", "text": f"Generation failed: {e}"}) + "\n"
             return
         srcs = [] if acc.lower().strip().startswith(NO_INFO_PREFIX) else build_sources(chunks)
+        _log_query(req.question, bool(srcs))
         yield json.dumps({"type": "done", "sources": srcs,
                           "latency_ms": int((time.time() - start) * 1000),
                           "chunks_retrieved": len(chunks)}) + "\n"
@@ -1210,3 +1271,61 @@ def delete_user(user_id: str, _admin: dict = Depends(require_admin)):
 @app.get("/stats/queries")
 def query_stats():
     return {"hits": QUERY_HITS}
+
+# ── Feedback + analytics + KB refresh ────────────────────────────────────────
+@app.post("/feedback")
+def submit_feedback(body: dict, user: dict = Depends(current_user)):
+    rating = body.get("rating")
+    if rating not in ("up", "down"):
+        raise HTTPException(400, "rating must be 'up' or 'down'")
+    try:    fb = json.loads(FEEDBACK_FILE.read_text()) if FEEDBACK_FILE.exists() else []
+    except Exception: fb = []
+    fb.insert(0, {"ts": int(time.time()), "user": user.get("email"), "rating": rating,
+                  "question": str(body.get("question", ""))[:200],
+                  "sources": (body.get("sources") or [])[:5]})
+    FEEDBACK_FILE.write_text(json.dumps(fb[:500], indent=2))
+    return {"ok": True}
+
+@app.get("/analytics")
+def get_analytics(_admin: dict = Depends(require_admin)):
+    try:    a = json.loads(ANALYTICS_FILE.read_text()) if ANALYTICS_FILE.exists() else {}
+    except Exception: a = {}
+    try:    fb = json.loads(FEEDBACK_FILE.read_text()) if FEEDBACK_FILE.exists() else []
+    except Exception: fb = []
+    top = sorted(QUERY_HITS.items(), key=lambda x: -x[1])[:10]
+    return {
+        "total_queries": a.get("total", 0),
+        "answered":      a.get("answered", 0),
+        "gaps":          a.get("gaps", [])[:20],
+        "top_sources":   [{"name": k, "hits": v} for k, v in top],
+        "feedback": {
+            "up":   sum(1 for f in fb if f.get("rating") == "up"),
+            "down": sum(1 for f in fb if f.get("rating") == "down"),
+            "recent": fb[:10],
+        },
+    }
+
+@app.post("/admin/refresh-kb")
+def refresh_kb(_admin: dict = Depends(require_admin)):
+    """Re-pull the source repos and rebuild the index. Heavy — best off-peak.
+    Schedule it by cron'ing a call to this endpoint."""
+    if PROCESSING_STATUS.get("__kb_refresh__", {}).get("status") == "processing":
+        return {"status": "processing"}
+    def _run():
+        global _chroma_client, _chroma_collection, _spec_map, _spec_names
+        PROCESSING_STATUS["__kb_refresh__"] = {"status": "processing", "chunks": 0}
+        try:
+            url_map = ingest.download_data()
+            n = ingest.build_index(url_map)
+            with _chroma_lock:                 # force re-open of the rebuilt collection
+                _chroma_client = None; _chroma_collection = None
+                _spec_map = None; _spec_names = []
+            PROCESSING_STATUS["__kb_refresh__"] = {"status": "indexed", "chunks": n}
+        except Exception as e:
+            PROCESSING_STATUS["__kb_refresh__"] = {"status": "failed", "chunks": 0, "error": str(e)[:200]}
+    threading.Thread(target=_run, daemon=True).start()
+    return {"status": "processing"}
+
+@app.get("/admin/refresh-kb/status")
+def refresh_kb_status(_admin: dict = Depends(require_admin)):
+    return PROCESSING_STATUS.get("__kb_refresh__", {"status": "idle", "chunks": 0})

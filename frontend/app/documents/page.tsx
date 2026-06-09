@@ -295,7 +295,7 @@ function ManagementTab({ user }: { user: { role: string } | null }) {
             dragging ? "border-red-400 bg-red-50" : "border-gray-200 hover:border-red-300 hover:bg-red-50/30"
           }`}
         >
-          <input ref={fileRef} type="file" accept=".pdf,.txt,.md,.json,.yaml,.yml"
+          <input ref={fileRef} type="file" accept=".pdf,.docx,.xlsx,.pptx,.csv,.txt,.md,.json,.yaml,.yml"
             className="hidden" onChange={handleFileInput} />
           <div className={`w-12 h-12 rounded-2xl flex items-center justify-center mx-auto mb-3 transition-colors ${dragging ? "bg-red-100" : "bg-gray-100"}`}>
             <svg className={`w-6 h-6 transition-colors ${dragging ? "text-red-500" : "text-gray-400"}`}
@@ -306,7 +306,7 @@ function ManagementTab({ user }: { user: { role: string } | null }) {
           <p className={`text-sm font-semibold transition-colors ${dragging ? "text-red-600" : "text-gray-600"}`}>
             {dragging ? "Drop to upload & index" : "Drag & drop to upload"}
           </p>
-          <p className="text-xs text-gray-400 mt-1">PDF, TXT, MD, JSON, YAML · Click to browse</p>
+          <p className="text-xs text-gray-400 mt-1">PDF, DOCX, XLSX, PPTX, CSV, TXT, MD, JSON, YAML · Click to browse</p>
         </div>
       )}
 
