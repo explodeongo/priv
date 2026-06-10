@@ -105,6 +105,23 @@ def doc_id(source: str, chunk_idx: int) -> str:
 
 # ── Parsers ─────────────────────────────────────────────────────────────────
 
+def _field_desc(prop: dict) -> str:
+    """Short 'type — description' for one OpenAPI schema property (best-effort)."""
+    if not isinstance(prop, dict):
+        return ""
+    t = prop.get("type", "")
+    if t == "array":
+        items = prop.get("items", {}) or {}
+        ref   = items.get("$ref", "")
+        inner = ref.split("/")[-1] if ref else items.get("type", "")
+        t = f"array of {inner}" if inner else "array"
+    elif not t and prop.get("$ref"):
+        t = prop["$ref"].split("/")[-1]
+    desc = (prop.get("description", "") or "").strip().replace("\n", " ").replace("|", "/")
+    if len(desc) > 160:
+        desc = desc[:160].rstrip() + "…"
+    return " — ".join(p for p in (t, desc) if p)
+
 def parse_openapi_spec(path: Path):
     """Parse an OpenAPI JSON/YAML spec into a readable text block."""
     try:
@@ -179,7 +196,13 @@ def parse_openapi_spec(path: Path):
                         opt    = [k for k in props if k not in req]
                         if req:
                             lines.append(f"Mandatory fields for {api_name}: {', '.join(req)}")
-                        if opt:
+                        if props:
+                            ordered = [k for k in req if k in props] + [k for k in props if k not in req]
+                            for k in ordered[:30]:
+                                d = _field_desc(props.get(k, {}))
+                                flag = "mandatory" if k in req else "optional"
+                                lines.append(f"- {k} ({flag}){': ' + d if d else ''}")
+                        elif opt:
                             lines.append(f"Optional fields: {', '.join(opt[:20])}")
                 lines.append("")
 
@@ -200,7 +223,14 @@ def parse_openapi_spec(path: Path):
             if sdesc: lines.append(sdesc)
             if req:
                 lines.append(f"The {schema_name} schema has these mandatory fields: {', '.join(req)}")
-            if opt:
+            if props:
+                lines.append(f"Fields of {schema_name} (mandatory first):")
+                ordered = [k for k in req if k in props] + [k for k in props if k not in req]
+                for k in ordered[:40]:
+                    d = _field_desc(props.get(k, {}))
+                    flag = "mandatory" if k in req else "optional"
+                    lines.append(f"- {k} ({flag}){': ' + d if d else ''}")
+            elif opt:
                 lines.append(f"Optional fields of {schema_name}: {', '.join(opt[:25])}")
             lines.append("")
 

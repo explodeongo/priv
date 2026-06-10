@@ -594,11 +594,19 @@ def add_web_source(req: WebReq, background_tasks: BackgroundTasks, _admin: dict 
 # For open-ended / non-spec queries we keep an out-of-domain escape hatch,
 # because nomic-embed-text distances can't reliably separate in-domain from
 # out-of-domain (an off-topic question can still land at a low distance).
-_PROMPT_INSTRUCTIONS = """Answer the QUESTION using only the CONTEXT below. Each source is labelled with its number and title. Be specific, and name the source you actually used when you state a fact. When you list fields, attributes, query parameters, or events, present them as a Markdown table — e.g. `| Field | Required | Description |` — marking each as mandatory or optional. For comparisons (e.g. two specs), use a Markdown table with one column per spec. When the user asks for an example request or how to call an operation, include a fenced code block with a concrete example (curl by default, or the language requested) built from the real path and fields in the context. Otherwise use short bullet points. The context may include several related sources — synthesize across the chunks and focus on exactly what the question asks.
+_PROMPT_INSTRUCTIONS = """You answer the QUESTION using the CONTEXT below. Each source is labelled with its number and title, e.g. "[Source 2: TMF620 — Product Catalog]".
 
-When asked for the mandatory/required fields of an entity, read them from that entity's MAIN resource schema or its _Create schema (e.g. the ProductOrder or ProductOrder_Create schema) — NOT from a reference (*Ref) or *_Update schema. Give a direct, confident answer; do not say information is missing if a relevant source is present.
+Write like a sharp, friendly expert explaining something to a teammate — clear, warm, and genuinely insightful, never robotic or one-word terse. Open with the direct answer in the very first sentence (no preamble, no label, no "Answer:"/"Summary:" heading). Then teach: explain what the key fields or concepts are for, how the pieces fit together, and any gotcha worth knowing — the context an expert would add so the reader actually understands, not just a bare list. A good answer usually has a one-line direct opener, a short plain-English explanation, and a structured detail block. Make every sentence count (no filler, no restating the question, no "In summary"/"I hope this helps" endings), but never be so brief that the answer carries no insight. Let the depth match the question.
 
-Start immediately with the substance of the answer. Do NOT open with filler like "Based on the provided context", "According to the sources", or "To answer the question" — just answer, citing the source inline where relevant."""
+Shape the answer to the question:
+- Fields, attributes, query parameters, events, or status codes → a Markdown table such as `| Field | Required | Description |`, marking each mandatory or optional, and give every row a real plain-English description of what it is for (not just its name).
+- Comparing two or more things (e.g. specs) → a Markdown table with one column each, then a one-line bottom line on which to use when.
+- "How do I…" or how to call an operation → numbered steps plus a fenced code block with a concrete, runnable example (curl by default, or the language asked for) built from the real path and fields in the context.
+- Anything else → short, scannable bullets or brief paragraphs.
+
+Every specific field name, path, status code, and value must come from the CONTEXT — never invent them — but do explain and connect them in your own words so the answer teaches rather than just lists. Cite inline with the bracketed source number: put [n] right after the fact it backs (combine like [2][3]); cite only sources you used. Synthesize across related chunks. Be confident and decisive: if a relevant source is present, answer it directly and do not claim information is missing. Never open with filler like "Based on the provided context" or "According to the sources".
+
+When asked what fields a resource requires, this almost always means what you must SUBMIT to create one: read the required list from the resource's _Create schema (e.g. ProductOrder_Create → productOrderItem), not the response resource's server-assigned id, not a *Ref or *_Update schema, and not an unrelated EventSubscription/Hub/Event/Error schema. Name the parent object a required field sits on (e.g. each productOrderItem needs an action and a productOffering) when the context shows it, and never answer with a single bare field name when you can explain what it is and where it lives. If two spec versions appear (e.g. 4.0.0 and 5.0.0), answer for the latest and note any notable difference."""
 
 _GUARD_LINE = """
 
@@ -608,7 +616,8 @@ If the CONTEXT does not address the question at all, reply with exactly:
 def _system_prompt(guarded: bool) -> str:
     """Build the system prompt, injecting the admin-configured domain persona."""
     persona = (load_chat_config().get("persona") or DEFAULT_CHAT_CONFIG["persona"]).strip()
-    head = f"You are SynaptDI (Synapt Domain Intelligence), a precise assistant for {persona}."
+    head = (f"You are SynaptDI (Synapt Domain Intelligence), an expert and friendly assistant for {persona}. "
+            "You explain things clearly and helpfully, like a knowledgeable colleague who wants the reader to truly get it.")
     return f"{head}\n\n{_PROMPT_INSTRUCTIONS}" + (_GUARD_LINE if guarded else "")
 
 def _source_label(meta: dict) -> str:
@@ -642,18 +651,43 @@ def _retrieval_query(question: str, history) -> str:
                 return f"{m['content'].strip()}\n{question}".strip()
     return question
 
+def _ordered_sources(chunks: list) -> tuple:
+    """Unique source names in first-seen order, a {name: 1-based number} map, and a
+    per-chunk number list. Shared by build_prompt and build_sources so the inline
+    [n] citations the model writes line up with the sources list sent to the client."""
+    order, index, nums = [], {}, []
+    for c in chunks:
+        src = c["metadata"].get("source", "Unknown")
+        if src not in index:
+            order.append(src)
+            index[src] = len(order)
+        nums.append(index[src])
+    return order, index, nums
+
+def _unique_specs(chunks: list) -> list:
+    """Ordered unique spec ids present in the retrieved chunks (for the retrieval trace)."""
+    seen = []
+    for c in chunks:
+        sid = c["metadata"].get("spec_id")
+        if sid and sid not in seen:
+            seen.append(sid)
+    return seen
+
 def build_prompt(question: str, chunks: list[dict], guarded: bool, history=None) -> str:
     sysp = _system_prompt(guarded)
+    _, index, _ = _ordered_sources(chunks)
+    # Number by SOURCE (not by chunk) so multiple chunks of the same spec share one
+    # citation number, and so [n] resolves to sources[n-1] on the client.
     ctx  = "\n\n".join(
-        f"[Source {i+1}: {_source_label(c['metadata'])}]\n{c['document']}"
-        for i, c in enumerate(chunks)
+        f"[Source {index[c['metadata'].get('source', 'Unknown')]}: {_source_label(c['metadata'])}]\n{c['document']}"
+        for c in chunks
     )
     return f"{sysp}\n\n{_format_history(history)}CONTEXT:\n{ctx}\n\nQUESTION: {question}\n\nANSWER:"
 
 def generate_answer(prompt: str) -> str:
     r = requests.post(f"{OLLAMA_URL}/api/generate",
                       json={"model": LLM_MODEL, "prompt": prompt, "stream": False,
-                            "options": {"temperature": 0.0, "num_predict": 700,
+                            "options": {"temperature": 0.0, "num_predict": 900,
                                         "stop": ["QUESTION:", "CONTEXT:"]}},
                       timeout=300)
     r.raise_for_status()
@@ -672,6 +706,10 @@ class Source(BaseModel):
 
 class QueryResponse(BaseModel):
     answer: str; sources: list; latency_ms: int; chunks_retrieved: int
+
+class FollowupReq(BaseModel):
+    question: str = ""
+    answer:   str = ""
 
 # ══════════════════════════════════════════════════════════════════════════════
 # ENDPOINTS
@@ -695,6 +733,54 @@ def stats():
     return {"chunks_indexed": col.count(), "collection": "axiom_v1"}
 
 # ── Query ──────────────────────────────────────────────────────────────────────
+# Schema-aware re-ranking. nomic-embed distances alone can rank an unrelated schema
+# that literally says "required: [id, callback]" (e.g. EventSubscription) above the
+# resource the user actually named (e.g. ProductOrder). We nudge the ranking by
+# matching the schema name embedded in each chunk to the resource in the question.
+_SCHEMA_RE    = re.compile(r"Schema:\s*([A-Za-z0-9_]+)")
+_FIELD_INTENT = re.compile(r"\b(mandatory|required|require[sd]?|fields?|attributes?|propert(?:y|ies)|schema)\b", re.I)
+_FOCUS_STOP   = {"what","whats","which","whose","does","do","did","the","a","an","of","for","in","on","is",
+                 "are","to","how","require","requires","required","mandatory","optional","fields","field",
+                 "attributes","attribute","property","properties","schema","schemas","list","show","tell",
+                 "me","about","and","or","resource","entity","object","model","open","api","apis","need",
+                 "needs","needed","have","has","with","please","give","when","creating","create"}
+_GENERIC_SCHEMAS = ("eventsubscription","hub","event","notification","error","extensibleerror","meta",
+                    "entityref","timeperiod","money","quantity","note","characteristic","attachmentref")
+
+def _schema_name(doc: str) -> str:
+    m = _SCHEMA_RE.search(doc or "")
+    return m.group(1) if m else ""
+
+def _resource_focus(question: str) -> dict:
+    """Pull the resource the user is asking about out of the question, e.g.
+    'mandatory fields of TMF622 Product Order' -> target 'productorder'."""
+    cleaned = re.sub(r"\bTMF\s?\d{3,4}\b", " ", question or "", flags=re.I)
+    words   = re.findall(r"[A-Za-z][A-Za-z0-9]*", cleaned)
+    keep    = [w for w in words if w.lower() not in _FOCUS_STOP and len(w) > 1]
+    return {"target": "".join(keep).lower(), "is_field": bool(_FIELD_INTENT.search(question or ""))}
+
+def _rank_adjust(focus: dict, doc: str, dist: float) -> float:
+    """Effective distance (lower = better): boost chunks whose schema name matches the
+    named resource; penalise unrelated generic schemas on a field-list question."""
+    target = focus.get("target") or ""
+    if not target:
+        return dist
+    sn = _schema_name(doc).lower().replace("_", "")
+    if not sn:
+        return dist
+    is_field = focus.get("is_field")
+    if is_field and any(sn == g or sn.startswith(g) for g in _GENERIC_SCHEMAS):
+        return dist + 0.25                        # unrelated notification/error schema on a fields question
+    if is_field and target in sn and (sn.endswith("ref") or sn.endswith("update")):
+        return dist + 0.15                        # *Ref / *_Update aren't where required-to-create lives
+    if sn == target + "create":
+        return dist - 0.22                        # the _Create / FVO variant — exactly what you must submit
+    if sn == target:
+        return dist - 0.16                        # the main resource schema
+    if target in sn or sn in target:
+        return dist - 0.10                        # related schema (e.g. ProductOrderItem)
+    return dist
+
 def retrieve(question: str, q_emb: list, top_k: int, scope: str):
     """Shared retrieval for /query and /query/stream.
     Returns (chunks, confident, empty_msg). chunks == [] means nothing relevant;
@@ -706,16 +792,18 @@ def retrieve(question: str, q_emb: list, top_k: int, scope: str):
 
     added     = [d.get("origin") or d.get("file") for d in load_uploads() if d.get("status") == "indexed"]
     added_set = set(added)
+    focus     = _resource_focus(question)
     seen:    set  = set()
     chunks:  list = []
     matched: list = []
 
-    def add(d, m, dist, upload=False) -> bool:
+    def add(d, m, dist, upload=False, eff=None) -> bool:
         key = (m.get("file", ""), m.get("chunk", 0))
         if key in seen:
             return False
         seen.add(key)
-        chunks.append({"document": d, "metadata": m, "distance": dist, "upload": upload})
+        chunks.append({"document": d, "metadata": m, "distance": dist, "upload": upload,
+                       "eff": dist if eff is None else eff})
         return True
 
     if scope == "docs":
@@ -738,14 +826,18 @@ def retrieve(question: str, q_emb: list, top_k: int, scope: str):
             per_spec = max(top_k // len(matched), 2)
             for sid in matched:
                 sfiles = sorted(spec_map[sid])
-                res = col.query(query_embeddings=[q_emb], n_results=min(per_spec * 3, total),
+                res = col.query(query_embeddings=[q_emb], n_results=min(per_spec * 4, total),
                                 where={"file": {"$in": sfiles}},
                                 include=["documents", "metadatas", "distances"])
+                cands = [(_rank_adjust(focus, d, dist), d, m, dist)
+                         for d, m, dist in zip(res["documents"][0], res["metadatas"][0], res["distances"][0])
+                         if dist < KB_DIST_MAX]
+                cands.sort(key=lambda x: x[0])           # schema-aware re-rank within the named spec
                 n = per_spec
-                for d, m, dist in zip(res["documents"][0], res["metadatas"][0], res["distances"][0]):
+                for eff, d, m, dist in cands:
                     if n <= 0:
                         break
-                    if dist < KB_DIST_MAX and add(d, m, dist):
+                    if add(d, m, dist, eff=eff):
                         n -= 1
 
         # 2. Merge uploaded docs (boosted) + general KB by effective distance.
@@ -757,19 +849,19 @@ def retrieve(question: str, q_emb: list, top_k: int, scope: str):
             for d, m, dist in zip(res["documents"][0], res["metadatas"][0], res["distances"][0]):
                 if dist < UPLOAD_MAX_DIST:
                     pool.append({"d": d, "m": m, "dist": dist, "upload": True,
-                                 "eff": max(0.0, dist - UPLOAD_BOOST)})
+                                 "eff": max(0.0, _rank_adjust(focus, d, dist) - UPLOAD_BOOST)})
         res = col.query(query_embeddings=[q_emb], n_results=min(top_k * 3, total),
                         include=["documents", "metadatas", "distances"])
         for d, m, dist in zip(res["documents"][0], res["metadatas"][0], res["distances"][0]):
             if m.get("origin", "") in added_set:        # user-added sources handled separately above
                 continue
             if dist < KB_DIST_MAX:
-                pool.append({"d": d, "m": m, "dist": dist, "upload": False, "eff": dist})
+                pool.append({"d": d, "m": m, "dist": dist, "upload": False, "eff": _rank_adjust(focus, d, dist)})
         pool.sort(key=lambda c: c["eff"])
         for c in pool:
             if len(chunks) >= top_k:
                 break
-            add(c["d"], c["m"], c["dist"], upload=c["upload"])
+            add(c["d"], c["m"], c["dist"], upload=c["upload"], eff=c["eff"])
 
     if not chunks:
         if scope == "docs":
@@ -780,8 +872,8 @@ def retrieve(question: str, q_emb: list, top_k: int, scope: str):
             msg = NO_INFO_MSG
         return [], False, msg
 
-    chunks.sort(key=lambda c: c["distance"])
-    best = chunks[0]["distance"]
+    chunks.sort(key=lambda c: c.get("eff", c["distance"]))   # schema-aware order → best match becomes [Source 1]
+    best = min(c["distance"] for c in chunks)
     if scope == "docs":
         confident = best < UPLOAD_MAX_DIST
     else:
@@ -791,13 +883,17 @@ def retrieve(question: str, q_emb: list, top_k: int, scope: str):
     return chunks, confident, ""
 
 def build_sources(chunks: list) -> list:
-    """De-duplicated source list as plain dicts (JSON-serialisable for streaming)."""
-    src_seen, sources = set(), []
+    """De-duplicated source list (JSON-serialisable), ordered to match the [Source n]
+    numbering used in the prompt so inline [n] citations resolve to the right entry."""
+    order, _, _ = _ordered_sources(chunks)
+    first = {}
     for c in chunks:
         src = c["metadata"].get("source", "Unknown")
-        if src in src_seen:
-            continue
-        src_seen.add(src)
+        if src not in first:
+            first[src] = c
+    sources = []
+    for src in order:
+        c = first[src]
         QUERY_HITS[src] = QUERY_HITS.get(src, 0) + 1
         sources.append({
             "name":    src,
@@ -813,7 +909,7 @@ def stream_ollama(prompt: str):
     """Yield answer text fragments from Ollama as they are generated."""
     with requests.post(f"{OLLAMA_URL}/api/generate",
                        json={"model": LLM_MODEL, "prompt": prompt, "stream": True,
-                             "options": {"temperature": 0.0, "num_predict": 700,
+                             "options": {"temperature": 0.0, "num_predict": 900,
                                          "stop": ["QUESTION:", "CONTEXT:"]}},
                        stream=True, timeout=300) as r:
         r.raise_for_status()
@@ -887,6 +983,10 @@ def query_stream(req: QueryRequest):
                               "latency_ms": int((time.time() - start) * 1000),
                               "chunks_retrieved": 0}) + "\n"
             return
+        # Tell the client what we're reading before the slow generation starts.
+        yield json.dumps({"type": "context",
+                          "sources": _ordered_sources(chunks)[0][:6],
+                          "specs":   _unique_specs(chunks)[:6]}) + "\n"
         acc = ""
         try:
             for frag in stream_ollama(build_prompt(req.question, chunks, guarded=not confident, history=req.history)):
@@ -902,6 +1002,42 @@ def query_stream(req: QueryRequest):
                           "chunks_retrieved": len(chunks)}) + "\n"
 
     return StreamingResponse(gen(), media_type="application/x-ndjson")
+
+# ── Follow-up suggestions ────────────────────────────────────────────────────────
+def generate_followups(question: str, answer: str) -> list:
+    """Suggest 3 natural next questions from a Q&A pair. Best-effort; [] on any failure."""
+    ans = (answer or "").strip()
+    if not ans or ans.lower().startswith(NO_INFO_PREFIX):
+        return []
+    prompt = (
+        "You help a user explore TM Forum / telecom standards. Given the question and answer "
+        "below, suggest exactly 3 short, specific follow-up questions the user would naturally "
+        "ask next. Each must be self-contained and under 12 words. Return ONLY the questions, "
+        "one per line, with no numbering or bullets.\n\n"
+        f"QUESTION: {question}\n\nANSWER: {ans[:1500]}\n\nFOLLOW-UPS:"
+    )
+    try:
+        r = requests.post(f"{OLLAMA_URL}/api/generate",
+                          json={"model": LLM_MODEL, "prompt": prompt, "stream": False,
+                                "options": {"temperature": 0.4, "num_predict": 120,
+                                            "stop": ["QUESTION:", "ANSWER:"]}},
+                          timeout=60)
+        r.raise_for_status()
+        raw = r.json().get("response", "")
+    except Exception:
+        return []
+    out = []
+    for line in raw.splitlines():
+        q = line.strip().lstrip("0123456789.-)*• ").strip().strip('"').strip()
+        if len(q) >= 8:
+            out.append(q if q.endswith("?") else q + "?")
+        if len(out) == 3:
+            break
+    return out
+
+@app.post("/followups")
+def followups(req: FollowupReq):
+    return {"questions": generate_followups(req.question, req.answer)}
 
 # ── Documents ──────────────────────────────────────────────────────────────────
 @app.get("/documents/library")
