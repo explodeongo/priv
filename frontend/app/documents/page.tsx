@@ -68,10 +68,10 @@ function RelevanceBar({ value }: { value: number }) {
   const color = pct >= 90 ? "bg-green-500" : pct >= 80 ? "bg-blue-500" : pct >= 70 ? "bg-amber-500" : "bg-red-500";
   return (
     <div className="flex items-center gap-2">
-      <div className="flex-1 h-1.5 bg-gray-100 rounded-full overflow-hidden">
+      <div className="flex-1 h-1.5 bg-gray-100 dark:bg-slate-800 rounded-full overflow-hidden">
         <div className={`h-full rounded-full transition-all ${color}`} style={{ width: `${pct}%` }} />
       </div>
-      <span className="text-xs font-medium text-gray-600 w-8 text-right">{pct}%</span>
+      <span className="text-xs font-medium text-gray-600 dark:text-slate-400 w-8 text-right">{pct}%</span>
     </div>
   );
 }
@@ -272,14 +272,14 @@ function ManagementTab({ user }: { user: { role: string } | null }) {
       {/* Stats */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
         {[
-          { label: "Uploaded docs",    value: stats.total,                                              color: "text-gray-900" },
+          { label: "Uploaded docs",    value: stats.total,                                              color: "text-gray-900 dark:text-slate-100" },
           { label: "Spec files (KB)",  value: libSummary.total_files.toLocaleString(),                  color: "text-blue-600" },
           { label: "Processing",       value: stats.processing,                                         color: "text-amber-600" },
           { label: "Total chunks",     value: (stats.chunks + libSummary.total_chunks).toLocaleString(), color: "text-red-600"  },
         ].map(s => (
-          <div key={s.label} className="bg-white rounded-2xl border border-gray-200 shadow-sm px-5 py-4">
+          <div key={s.label} className="bg-white dark:bg-slate-900 rounded-2xl border border-gray-200 dark:border-slate-700 shadow-sm px-5 py-4">
             <div className={`text-2xl font-bold ${s.color}`}>{s.value}</div>
-            <div className="text-xs text-gray-500 font-medium mt-0.5">{s.label}</div>
+            <div className="text-xs text-gray-500 dark:text-slate-400 font-medium mt-0.5">{s.label}</div>
           </div>
         ))}
       </div>
@@ -292,18 +292,18 @@ function ManagementTab({ user }: { user: { role: string } | null }) {
           onDrop={handleDrop}
           onClick={() => fileRef.current?.click()}
           className={`border-2 border-dashed rounded-2xl p-8 text-center cursor-pointer transition-all ${
-            dragging ? "border-red-400 bg-red-50" : "border-gray-200 hover:border-red-300 hover:bg-red-50/30"
+            dragging ? "border-red-400 bg-red-50" : "border-gray-200 dark:border-slate-700 hover:border-red-300 hover:bg-red-50/30"
           }`}
         >
           <input ref={fileRef} type="file" accept=".pdf,.docx,.xlsx,.pptx,.csv,.txt,.md,.json,.yaml,.yml"
             className="hidden" onChange={handleFileInput} />
-          <div className={`w-12 h-12 rounded-2xl flex items-center justify-center mx-auto mb-3 transition-colors ${dragging ? "bg-red-100" : "bg-gray-100"}`}>
+          <div className={`w-12 h-12 rounded-2xl flex items-center justify-center mx-auto mb-3 transition-colors ${dragging ? "bg-red-100" : "bg-gray-100 dark:bg-slate-800"}`}>
             <svg className={`w-6 h-6 transition-colors ${dragging ? "text-red-500" : "text-gray-400"}`}
               fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.5">
               <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/>
             </svg>
           </div>
-          <p className={`text-sm font-semibold transition-colors ${dragging ? "text-red-600" : "text-gray-600"}`}>
+          <p className={`text-sm font-semibold transition-colors ${dragging ? "text-red-600" : "text-gray-600 dark:text-slate-400"}`}>
             {dragging ? "Drop to upload & index" : "Drag & drop to upload"}
           </p>
           <p className="text-xs text-gray-400 mt-1">PDF, DOCX, XLSX, PPTX, CSV, TXT, MD, JSON, YAML · Click to browse</p>
@@ -313,16 +313,16 @@ function ManagementTab({ user }: { user: { role: string } | null }) {
       {/* Add from a Git repo or a web link */}
       {canUpload && (
         <div className="grid sm:grid-cols-2 gap-3">
-          <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-4">
+          <div className="bg-white dark:bg-slate-900 rounded-2xl border border-gray-200 dark:border-slate-700 shadow-sm p-4">
             <div className="flex items-center gap-2 mb-2">
-              <span className="text-sm font-semibold text-gray-700">From a Git repo</span>
+              <span className="text-sm font-semibold text-gray-700 dark:text-slate-300">From a Git repo</span>
               <span className="text-[10px] text-gray-400 uppercase tracking-wide">GitHub · TMF · MEF</span>
             </div>
             <div className="flex gap-2">
               <input value={repoUrl} onChange={e => setRepoUrl(e.target.value)}
                 onKeyDown={e => { if (e.key === "Enter") addSource("repo", repoUrl); }}
                 placeholder="https://github.com/org/repo"
-                className="flex-1 min-w-0 border border-gray-200 rounded-xl px-3 py-2 text-sm text-gray-800 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-red-500" />
+                className="flex-1 min-w-0 border border-gray-200 dark:border-slate-700 rounded-xl px-3 py-2 text-sm text-gray-800 dark:text-slate-200 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-red-500" />
               <button onClick={() => addSource("repo", repoUrl)} disabled={adding === "repo"}
                 className="flex-shrink-0 bg-red-600 hover:bg-red-700 disabled:bg-gray-200 text-white rounded-xl px-4 py-2 text-sm font-semibold transition-colors">
                 {adding === "repo" ? "…" : "Add"}
@@ -330,16 +330,16 @@ function ManagementTab({ user }: { user: { role: string } | null }) {
             </div>
             <p className="text-xs text-gray-400 mt-1.5">Clones &amp; indexes every OpenAPI spec + doc in the repo.</p>
           </div>
-          <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-4">
+          <div className="bg-white dark:bg-slate-900 rounded-2xl border border-gray-200 dark:border-slate-700 shadow-sm p-4">
             <div className="flex items-center gap-2 mb-2">
-              <span className="text-sm font-semibold text-gray-700">From a web link</span>
+              <span className="text-sm font-semibold text-gray-700 dark:text-slate-300">From a web link</span>
               <span className="text-[10px] text-gray-400 uppercase tracking-wide">page or PDF</span>
             </div>
             <div className="flex gap-2">
               <input value={webUrl} onChange={e => setWebUrl(e.target.value)}
                 onKeyDown={e => { if (e.key === "Enter") addSource("weblink", webUrl); }}
                 placeholder="https://example.com/spec"
-                className="flex-1 min-w-0 border border-gray-200 rounded-xl px-3 py-2 text-sm text-gray-800 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-red-500" />
+                className="flex-1 min-w-0 border border-gray-200 dark:border-slate-700 rounded-xl px-3 py-2 text-sm text-gray-800 dark:text-slate-200 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-red-500" />
               <button onClick={() => addSource("weblink", webUrl)} disabled={adding === "web"}
                 className="flex-shrink-0 bg-red-600 hover:bg-red-700 disabled:bg-gray-200 text-white rounded-xl px-4 py-2 text-sm font-semibold transition-colors">
                 {adding === "web" ? "…" : "Add"}
@@ -358,26 +358,26 @@ function ManagementTab({ user }: { user: { role: string } | null }) {
             <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
           </svg>
           <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search documents…"
-            className="w-full border border-gray-200 rounded-xl pl-9 pr-4 py-2 text-sm text-gray-700 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-red-500 bg-white" />
+            className="w-full border border-gray-200 dark:border-slate-700 rounded-xl pl-9 pr-4 py-2 text-sm text-gray-700 dark:text-slate-300 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-red-500 bg-white" />
         </div>
-        <div className="flex gap-1 bg-gray-100 rounded-xl p-1">
+        <div className="flex gap-1 bg-gray-100 dark:bg-slate-800 rounded-xl p-1">
           {(["all","indexed","processing","failed"] as const).map(f => (
             <button key={f} onClick={() => setFilter(f)}
               className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all capitalize ${
-                filter === f ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-700"
+                filter === f ? "bg-white dark:bg-slate-700 text-gray-900 dark:text-slate-100 shadow-sm" : "text-gray-500 dark:text-slate-400 hover:text-gray-700 dark:text-slate-300"
               }`}>{f}</button>
           ))}
         </div>
       </div>
 
       {/* Table */}
-      <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
+      <div className="bg-white dark:bg-slate-900 rounded-2xl border border-gray-200 dark:border-slate-700 shadow-sm overflow-hidden">
         {loadingList ? (
           <div className="py-16 text-center text-sm text-gray-400">Loading documents…</div>
         ) : (
           <table className="w-full">
             <thead>
-              <tr className="bg-gray-50 border-b border-gray-100">
+              <tr className="bg-gray-50 dark:bg-slate-800 border-b border-gray-100 dark:border-slate-800">
                 {["Document","Status","Chunks","Size","Uploaded",""].map((h, i) => (
                   <th key={i} className={`text-[11px] font-bold text-gray-400 uppercase tracking-widest px-5 py-3.5 ${i === 0 ? "text-left" : "text-center"}`}>{h}</th>
                 ))}
@@ -386,9 +386,9 @@ function ManagementTab({ user }: { user: { role: string } | null }) {
             <tbody className="divide-y divide-gray-50">
               {folderGroups.map(g => (
                 <Fragment key={g.cat}>
-                  <tr className="bg-gray-50/60 hover:bg-gray-100/60 cursor-pointer select-none" onClick={() => toggleCat(g.cat)}>
+                  <tr className="bg-gray-50 dark:bg-slate-800/60 hover:bg-gray-100 dark:bg-slate-800/60 cursor-pointer select-none" onClick={() => toggleCat(g.cat)}>
                     <td colSpan={6} className="px-5 py-2.5">
-                      <div className="flex items-center gap-2 text-sm font-semibold text-gray-700">
+                      <div className="flex items-center gap-2 text-sm font-semibold text-gray-700 dark:text-slate-300">
                         <svg className={`w-3.5 h-3.5 text-gray-400 transition-transform ${collapsedCats.has(g.cat) ? "" : "rotate-90"}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><polyline points="9 18 15 12 9 6"/></svg>
                         <svg className="w-4 h-4 text-amber-500" fill="currentColor" viewBox="0 0 24 24"><path d="M10 4H4a2 2 0 00-2 2v12a2 2 0 002 2h16a2 2 0 002-2V8a2 2 0 00-2-2h-8l-2-2z"/></svg>
                         {g.cat}
@@ -397,7 +397,7 @@ function ManagementTab({ user }: { user: { role: string } | null }) {
                     </td>
                   </tr>
                   {!collapsedCats.has(g.cat) && g.docs.map(doc => (
-                    <tr key={doc.file} className="hover:bg-gray-50/70 transition-colors group">
+                    <tr key={doc.file} className="hover:bg-gray-50 dark:bg-slate-800/70 transition-colors group">
                   <td className="px-5 py-4">
                     <div className="flex items-center gap-3">
                       <div className="w-8 h-8 bg-red-50 border border-red-100 rounded-lg flex items-center justify-center flex-shrink-0">
@@ -407,7 +407,7 @@ function ManagementTab({ user }: { user: { role: string } | null }) {
                       </div>
                       <div className="min-w-0">
                         <div className="flex items-center gap-2">
-                          <span className="text-sm font-semibold text-gray-900 truncate max-w-xs">{doc.name}</span>
+                          <span className="text-sm font-semibold text-gray-900 dark:text-slate-100 truncate max-w-xs">{doc.name}</span>
                           {doc.type && doc.type !== "file" && (
                             <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-amber-50 text-amber-700 border border-amber-200 flex-shrink-0 tracking-wide">
                               {doc.type === "repo" ? "GIT REPO" : "WEB"}
@@ -426,12 +426,12 @@ function ManagementTab({ user }: { user: { role: string } | null }) {
                   </td>
                   <td className="px-5 py-4 text-center"><StatusBadge status={doc.status} /></td>
                   <td className="px-5 py-4 text-center">
-                    <span className="text-sm font-medium text-gray-700">
+                    <span className="text-sm font-medium text-gray-700 dark:text-slate-300">
                       {doc.chunks > 0 ? doc.chunks.toLocaleString() : "—"}
                     </span>
                   </td>
                   <td className="px-5 py-4 text-center">
-                    <span className="text-sm text-gray-500">{doc.size || "—"}</span>
+                    <span className="text-sm text-gray-500 dark:text-slate-400">{doc.size || "—"}</span>
                   </td>
                   <td className="px-5 py-4 text-center">
                     <span className="text-xs text-gray-400">{doc.uploaded || "—"}</span>
@@ -480,7 +480,7 @@ function ManagementTab({ user }: { user: { role: string } | null }) {
       <div>
         <div className="flex items-center justify-between mb-3">
           <div>
-            <h2 className="text-sm font-semibold text-gray-900">Knowledge Base</h2>
+            <h2 className="text-sm font-semibold text-gray-900 dark:text-slate-100">Knowledge Base</h2>
             <p className="text-xs text-gray-400 mt-0.5">
               Pre-indexed spec files · {libSummary.total_files.toLocaleString()} files · {libSummary.total_chunks.toLocaleString()} chunks · read-only
             </p>
@@ -492,21 +492,21 @@ function ManagementTab({ user }: { user: { role: string } | null }) {
             </svg>
             <input value={libSearch} onChange={e => setLibSearch(e.target.value)}
               placeholder="Search specs…"
-              className="border border-gray-200 rounded-xl pl-8 pr-3 py-1.5 text-xs text-gray-700 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-red-500 bg-white w-44" />
+              className="border border-gray-200 dark:border-slate-700 rounded-xl pl-8 pr-3 py-1.5 text-xs text-gray-700 dark:text-slate-300 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-red-500 bg-white w-44" />
           </div>
         </div>
 
         {loadingLib ? (
-          <div className="bg-white rounded-2xl border border-gray-200 shadow-sm py-10 text-center text-sm text-gray-400">
+          <div className="bg-white dark:bg-slate-900 rounded-2xl border border-gray-200 dark:border-slate-700 shadow-sm py-10 text-center text-sm text-gray-400">
             Loading knowledge base…
           </div>
         ) : (
           <div className="space-y-2">
             {filteredLibGroups.map(group => (
-              <div key={group.id} className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
+              <div key={group.id} className="bg-white dark:bg-slate-900 rounded-2xl border border-gray-200 dark:border-slate-700 shadow-sm overflow-hidden">
                 <button
                   onClick={() => toggleLib(group.id)}
-                  className="w-full flex items-center justify-between px-5 py-3.5 hover:bg-gray-50 transition-colors"
+                  className="w-full flex items-center justify-between px-5 py-3.5 hover:bg-gray-50 dark:bg-slate-800 transition-colors"
                 >
                   <div className="flex items-center gap-3 min-w-0">
                     <div className="w-7 h-7 bg-blue-50 border border-blue-100 rounded-lg flex items-center justify-center flex-shrink-0">
@@ -515,7 +515,7 @@ function ManagementTab({ user }: { user: { role: string } | null }) {
                       </svg>
                     </div>
                     <div className="text-left min-w-0">
-                      <span className="text-sm font-semibold text-gray-800">{group.name}</span>
+                      <span className="text-sm font-semibold text-gray-800 dark:text-slate-200">{group.name}</span>
                       <span className="text-xs text-gray-400 ml-2">{group.files} files · {group.chunks.toLocaleString()} chunks</span>
                     </div>
                   </div>
@@ -529,10 +529,10 @@ function ManagementTab({ user }: { user: { role: string } | null }) {
                 </button>
 
                 {libExpanded.has(group.id) && (
-                  <div className="border-t border-gray-100">
+                  <div className="border-t border-gray-100 dark:border-slate-800">
                     <table className="w-full">
                       <thead>
-                        <tr className="bg-gray-50 border-b border-gray-100">
+                        <tr className="bg-gray-50 dark:bg-slate-800 border-b border-gray-100 dark:border-slate-800">
                           <th className="text-left text-[11px] font-bold text-gray-400 uppercase tracking-widest px-5 py-2">Document</th>
                           <th className="text-center text-[11px] font-bold text-gray-400 uppercase tracking-widest px-4 py-2">Chunks</th>
                           <th className="text-center text-[11px] font-bold text-gray-400 uppercase tracking-widest px-4 py-2">Status</th>
@@ -540,13 +540,13 @@ function ManagementTab({ user }: { user: { role: string } | null }) {
                       </thead>
                       <tbody className="divide-y divide-gray-50">
                         {group.documents.map(doc => (
-                          <tr key={doc.file} className="hover:bg-gray-50/60 transition-colors">
+                          <tr key={doc.file} className="hover:bg-gray-50 dark:bg-slate-800/60 transition-colors">
                             <td className="px-5 py-3">
-                              <div className="text-sm font-medium text-gray-800 truncate max-w-sm">{doc.name}</div>
+                              <div className="text-sm font-medium text-gray-800 dark:text-slate-200 truncate max-w-sm">{doc.name}</div>
                               <div className="text-xs text-gray-400 font-mono truncate">{doc.file}</div>
                             </td>
                             <td className="px-4 py-3 text-center">
-                              <span className="text-sm font-medium text-gray-600">{doc.chunks.toLocaleString()}</span>
+                              <span className="text-sm font-medium text-gray-600 dark:text-slate-400">{doc.chunks.toLocaleString()}</span>
                             </td>
                             <td className="px-4 py-3 text-center">
                               <span className="inline-flex items-center gap-1.5 text-xs font-semibold px-2 py-0.5 rounded-full bg-green-100 text-green-700">
@@ -562,7 +562,7 @@ function ManagementTab({ user }: { user: { role: string } | null }) {
               </div>
             ))}
             {filteredLibGroups.length === 0 && (
-              <div className="bg-white rounded-2xl border border-gray-200 shadow-sm py-10 text-center text-sm text-gray-400">
+              <div className="bg-white dark:bg-slate-900 rounded-2xl border border-gray-200 dark:border-slate-700 shadow-sm py-10 text-center text-sm text-gray-400">
                 No spec files match your search.
               </div>
             )}
@@ -628,12 +628,12 @@ function PerformanceTab() {
     <div className="space-y-6">
       {/* Period selector */}
       <div className="flex items-center justify-between flex-wrap gap-3">
-        <p className="text-sm text-gray-500">Performance metrics for {indexed.length} indexed document{indexed.length !== 1 ? "s" : ""}</p>
-        <div className="flex gap-1 bg-gray-100 rounded-xl p-1">
+        <p className="text-sm text-gray-500 dark:text-slate-400">Performance metrics for {indexed.length} indexed document{indexed.length !== 1 ? "s" : ""}</p>
+        <div className="flex gap-1 bg-gray-100 dark:bg-slate-800 rounded-xl p-1">
           {(["7d","30d","90d"] as const).map(p => (
             <button key={p} onClick={() => setPeriod(p)}
               className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all ${
-                period === p ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-700"
+                period === p ? "bg-white dark:bg-slate-700 text-gray-900 dark:text-slate-100 shadow-sm" : "text-gray-500 dark:text-slate-400 hover:text-gray-700 dark:text-slate-300"
               }`}>{p === "7d" ? "7 days" : p === "30d" ? "30 days" : "90 days"}</button>
           ))}
         </div>
@@ -651,31 +651,31 @@ function PerformanceTab() {
             sub: topDoc ? `${topDoc.queries.toLocaleString()} queries` : "No data",
             icon: "⭐", bg: "bg-amber-50", color: "text-amber-600" },
         ].map(c => (
-          <div key={c.label} className="bg-white rounded-2xl border border-gray-200 shadow-sm p-6">
+          <div key={c.label} className="bg-white dark:bg-slate-900 rounded-2xl border border-gray-200 dark:border-slate-700 shadow-sm p-6">
             <div className={`w-10 h-10 ${c.bg} rounded-xl flex items-center justify-center text-xl mb-3`}>{c.icon}</div>
             <div className={`text-2xl font-bold ${c.color} leading-none`}>{c.value}</div>
-            <div className="text-xs text-gray-500 font-medium mt-1">{c.label}</div>
+            <div className="text-xs text-gray-500 dark:text-slate-400 font-medium mt-1">{c.label}</div>
             <div className="text-[11px] text-gray-400">{c.sub}</div>
           </div>
         ))}
       </div>
 
       {/* Table */}
-      <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
-        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
-          <h2 className="text-sm font-semibold text-gray-900">Document Performance</h2>
-          <div className="flex gap-1 bg-gray-100 rounded-lg p-0.5">
+      <div className="bg-white dark:bg-slate-900 rounded-2xl border border-gray-200 dark:border-slate-700 shadow-sm overflow-hidden">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100 dark:border-slate-800">
+          <h2 className="text-sm font-semibold text-gray-900 dark:text-slate-100">Document Performance</h2>
+          <div className="flex gap-1 bg-gray-100 dark:bg-slate-800 rounded-lg p-0.5">
             {(["queries","chunks"] as const).map(s => (
               <button key={s} onClick={() => setSortBy(s)}
                 className={`px-3 py-1.5 rounded-md text-xs font-medium transition-all ${
-                  sortBy === s ? "bg-white text-gray-900 shadow-sm" : "text-gray-500"
+                  sortBy === s ? "bg-white dark:bg-slate-700 text-gray-900 dark:text-slate-100 shadow-sm" : "text-gray-500 dark:text-slate-400"
                 }`}>{s === "queries" ? "By queries" : "By chunks"}</button>
             ))}
           </div>
         </div>
         <table className="w-full">
           <thead>
-            <tr className="bg-gray-50 border-b border-gray-100">
+            <tr className="bg-gray-50 dark:bg-slate-800 border-b border-gray-100 dark:border-slate-800">
               <th className="text-left text-[11px] font-bold text-gray-400 uppercase tracking-widest px-6 py-3">Document</th>
               <th className="text-center text-[11px] font-bold text-gray-400 uppercase tracking-widest px-4 py-3">Queries</th>
               <th className="text-left text-[11px] font-bold text-gray-400 uppercase tracking-widest px-4 py-3 w-44">Coverage</th>
@@ -685,23 +685,23 @@ function PerformanceTab() {
           </thead>
           <tbody className="divide-y divide-gray-50">
             {sorted.map((doc, idx) => (
-              <tr key={doc.file} className="hover:bg-gray-50/60 transition-colors">
+              <tr key={doc.file} className="hover:bg-gray-50 dark:bg-slate-800/60 transition-colors">
                 <td className="px-6 py-4">
-                  <div className="text-sm font-semibold text-gray-900">{doc.name}</div>
+                  <div className="text-sm font-semibold text-gray-900 dark:text-slate-100">{doc.name}</div>
                   <div className="text-xs text-gray-400 font-mono mt-0.5">{doc.file}</div>
                 </td>
                 <td className="px-4 py-4 text-center">
-                  <span className="text-sm font-bold text-gray-900">{doc.queries.toLocaleString()}</span>
+                  <span className="text-sm font-bold text-gray-900 dark:text-slate-100">{doc.queries.toLocaleString()}</span>
                 </td>
                 <td className="px-4 py-4"><RelevanceBar value={doc.relevance} /></td>
                 <td className="px-4 py-4 text-center">
-                  <span className="text-sm text-gray-600">{doc.chunks.toLocaleString()}</span>
+                  <span className="text-sm text-gray-600 dark:text-slate-400">{doc.chunks.toLocaleString()}</span>
                 </td>
                 <td className="px-4 py-4 text-center">
                   <span className={`text-xs font-bold w-6 h-6 rounded-full inline-flex items-center justify-center ${
                     idx === 0 ? "bg-amber-100 text-amber-700" :
-                    idx === 1 ? "bg-gray-100 text-gray-600" :
-                    idx === 2 ? "bg-orange-100 text-orange-600" : "bg-gray-50 text-gray-400"
+                    idx === 1 ? "bg-gray-100 dark:bg-slate-800 text-gray-600 dark:text-slate-400" :
+                    idx === 2 ? "bg-orange-100 text-orange-600" : "bg-gray-50 dark:bg-slate-800 text-gray-400"
                   }`}>{idx + 1}</span>
                 </td>
               </tr>
@@ -727,23 +727,23 @@ export default function DocumentsPage() {
   return (
     <AppShell>
       <div className="flex flex-col h-full">
-        <header className="flex items-center justify-between px-6 py-4 bg-white border-b border-gray-200 flex-shrink-0">
+        <header className="flex items-center justify-between px-6 py-4 bg-white dark:bg-slate-900 border-b border-gray-200 dark:border-slate-700 flex-shrink-0">
           <div>
-            <h1 className="text-base font-semibold text-gray-900">Documents</h1>
+            <h1 className="text-base font-semibold text-gray-900 dark:text-slate-100">Documents</h1>
             <p className="text-xs text-gray-400 mt-0.5">Manage your knowledge base and monitor performance</p>
           </div>
         </header>
 
-        <div className="flex border-b border-gray-200 bg-white px-6 flex-shrink-0">
+        <div className="flex border-b border-gray-200 dark:border-slate-700 bg-white px-6 flex-shrink-0">
           {tabs.map(t => (
             <button key={t.id} onClick={() => setTab(t.id)}
               className={`px-5 py-3.5 text-sm font-medium border-b-2 transition-all -mb-px ${
-                tab === t.id ? "border-red-600 text-red-600" : "border-transparent text-gray-500 hover:text-gray-800"
+                tab === t.id ? "border-red-600 text-red-600" : "border-transparent text-gray-500 dark:text-slate-400 hover:text-gray-800 dark:text-slate-200"
               }`}>{t.label}</button>
           ))}
         </div>
 
-        <div className="flex-1 overflow-y-auto bg-gray-50">
+        <div className="flex-1 overflow-y-auto bg-gray-50 dark:bg-slate-800">
           <div className="max-w-6xl mx-auto px-6 py-8">
             {tab === "management"  && <ManagementTab user={user} />}
             {tab === "performance" && <PerformanceTab />}

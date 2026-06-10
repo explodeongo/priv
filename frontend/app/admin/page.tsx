@@ -46,7 +46,7 @@ function Toggle({ on, onChange }: { on: boolean; onChange: () => void }) {
 const ROLE_BADGE: Record<UserRole, string> = {
   admin:   "bg-red-100 text-red-700",
   analyst: "bg-blue-100 text-blue-700",
-  viewer:  "bg-gray-100 text-gray-600",
+  viewer:  "bg-gray-100 dark:bg-slate-800 text-gray-600 dark:text-slate-400",
 };
 const STATUS_DOT: Record<UserStatus, string> = {
   active:   "bg-green-500",
@@ -165,12 +165,12 @@ function UserManagementTab() {
       {/* Stats */}
       <div className="grid grid-cols-4 gap-4">
         {[
-          { label: "Total users",  value: stats.total,   color: "text-gray-900" },
+          { label: "Total users",  value: stats.total,   color: "text-gray-900 dark:text-slate-100" },
           { label: "Active now",   value: stats.active,  color: "text-green-600" },
           { label: "Admins",       value: stats.admins,  color: "text-red-600" },
-          { label: "Viewers",      value: stats.viewers, color: "text-gray-500" },
+          { label: "Viewers",      value: stats.viewers, color: "text-gray-500 dark:text-slate-400" },
         ].map(s => (
-          <div key={s.label} className="bg-white rounded-2xl border border-gray-200 shadow-sm px-5 py-4">
+          <div key={s.label} className="bg-white dark:bg-slate-900 rounded-2xl border border-gray-200 dark:border-slate-700 shadow-sm px-5 py-4">
             <div className={`text-2xl font-bold ${s.color}`}>{s.value}</div>
             <div className="text-xs text-gray-400 mt-0.5 font-medium">{s.label}</div>
           </div>
@@ -185,13 +185,13 @@ function UserManagementTab() {
               <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
             </svg>
             <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search users…"
-              className="border border-gray-200 rounded-xl pl-9 pr-4 py-2 text-sm text-gray-700 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-red-500 bg-white w-56" />
+              className="border border-gray-200 dark:border-slate-700 rounded-xl pl-9 pr-4 py-2 text-sm text-gray-700 dark:text-slate-300 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-red-500 bg-white w-56" />
           </div>
-          <div className="flex gap-1 bg-gray-100 rounded-xl p-1">
+          <div className="flex gap-1 bg-gray-100 dark:bg-slate-800 rounded-xl p-1">
             {(["all","admin","analyst","viewer"] as const).map(r => (
               <button key={r} onClick={() => setFilter(r)}
                 className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all capitalize ${
-                  filter === r ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-700"
+                  filter === r ? "bg-white dark:bg-slate-700 text-gray-900 dark:text-slate-100 shadow-sm" : "text-gray-500 dark:text-slate-400 hover:text-gray-700 dark:text-slate-300"
                 }`}>{r}</button>
             ))}
           </div>
@@ -207,16 +207,16 @@ function UserManagementTab() {
 
       {/* Invite panel */}
       {showInvite && (
-        <div className="bg-white rounded-2xl border border-red-200 shadow-md p-6">
-          <h3 className="text-sm font-semibold text-gray-900 mb-4">Invite new user</h3>
+        <div className="bg-white dark:bg-slate-900 rounded-2xl border border-red-200 shadow-md p-6">
+          <h3 className="text-sm font-semibold text-gray-900 dark:text-slate-100 mb-4">Invite new user</h3>
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <input value={invName} onChange={e => setInvName(e.target.value)} placeholder="Full name"
-              className="border border-gray-200 rounded-xl px-3.5 py-2.5 text-sm text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-red-500" />
+              className="border border-gray-200 dark:border-slate-700 rounded-xl px-3.5 py-2.5 text-sm text-gray-900 dark:text-slate-100 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-red-500" />
             <input value={invEmail} onChange={e => setInvEmail(e.target.value)} placeholder="Email address"
-              className="border border-gray-200 rounded-xl px-3.5 py-2.5 text-sm text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-red-500" />
+              className="border border-gray-200 dark:border-slate-700 rounded-xl px-3.5 py-2.5 text-sm text-gray-900 dark:text-slate-100 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-red-500" />
             <div className="flex gap-2">
               <select value={invRole} onChange={e => setInvRole(e.target.value as UserRole)}
-                className="flex-1 border border-gray-200 rounded-xl px-3 py-2.5 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-red-500 bg-white">
+                className="flex-1 border border-gray-200 dark:border-slate-700 rounded-xl px-3 py-2.5 text-sm text-gray-700 dark:text-slate-300 focus:outline-none focus:ring-2 focus:ring-red-500 bg-white">
                 <option value="viewer">Viewer</option>
                 <option value="analyst">Analyst</option>
                 <option value="admin">Admin</option>
@@ -232,13 +232,13 @@ function UserManagementTab() {
       )}
 
       {/* Table */}
-      <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
+      <div className="bg-white dark:bg-slate-900 rounded-2xl border border-gray-200 dark:border-slate-700 shadow-sm overflow-hidden">
         {loading ? (
           <div className="py-16 text-center text-sm text-gray-400">Loading users…</div>
         ) : (
           <table className="w-full">
             <thead>
-              <tr className="border-b border-gray-100 bg-gray-50">
+              <tr className="border-b border-gray-100 dark:border-slate-800 bg-gray-50 dark:bg-slate-800">
                 {["User","Role","Status","Last active","Actions"].map(h => (
                   <th key={h} className="text-left text-[11px] font-bold text-gray-400 uppercase tracking-widest px-5 py-3.5">{h}</th>
                 ))}
@@ -248,12 +248,12 @@ function UserManagementTab() {
               {visible.map(u => {
                 const init = u.name.split(" ").map(n => n[0]).join("").slice(0, 2).toUpperCase();
                 return (
-                  <tr key={u.id} className="hover:bg-gray-50/70 transition-colors">
+                  <tr key={u.id} className="hover:bg-gray-50 dark:bg-slate-800/70 transition-colors">
                     <td className="px-5 py-4">
                       <div className="flex items-center gap-3">
                         <div className="w-8 h-8 rounded-full bg-red-600 flex items-center justify-center text-white text-xs font-bold flex-shrink-0">{init}</div>
                         <div>
-                          <div className="text-sm font-semibold text-gray-900">{u.name}</div>
+                          <div className="text-sm font-semibold text-gray-900 dark:text-slate-100">{u.name}</div>
                           <div className="text-xs text-gray-400">{u.email}</div>
                         </div>
                       </div>
@@ -262,12 +262,12 @@ function UserManagementTab() {
                       {editRole === u.id ? (
                         <div className="flex items-center gap-1.5">
                           <select defaultValue={u.role} onChange={e => changeRole(u.id, e.target.value as UserRole)}
-                            className="border border-gray-200 rounded-lg px-2 py-1 text-xs text-gray-700 focus:outline-none focus:ring-1 focus:ring-red-500 bg-white">
+                            className="border border-gray-200 dark:border-slate-700 rounded-lg px-2 py-1 text-xs text-gray-700 dark:text-slate-300 focus:outline-none focus:ring-1 focus:ring-red-500 bg-white">
                             <option value="viewer">Viewer</option>
                             <option value="analyst">Analyst</option>
                             <option value="admin">Admin</option>
                           </select>
-                          <button onClick={() => setEditRole(null)} className="text-gray-400 hover:text-gray-600">
+                          <button onClick={() => setEditRole(null)} className="text-gray-400 hover:text-gray-600 dark:text-slate-400">
                             <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
                               <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
                             </svg>
@@ -284,10 +284,10 @@ function UserManagementTab() {
                     <td className="px-5 py-4">
                       <div className="flex items-center gap-2">
                         <span className={`w-2 h-2 rounded-full ${STATUS_DOT[u.status]}`} />
-                        <span className="text-xs text-gray-500 capitalize">{u.status}</span>
+                        <span className="text-xs text-gray-500 dark:text-slate-400 capitalize">{u.status}</span>
                       </div>
                     </td>
-                    <td className="px-5 py-4"><span className="text-xs text-gray-500">{u.lastActive}</span></td>
+                    <td className="px-5 py-4"><span className="text-xs text-gray-500 dark:text-slate-400">{u.lastActive}</span></td>
                     <td className="px-5 py-4">
                       {u.role !== "admin" && (
                         <button onClick={() => removeUser(u.id)}
@@ -346,9 +346,9 @@ function AnalyticsTab() {
   const fb = data.feedback || { up: 0, down: 0 };
   const rate = data.total_queries ? Math.round((100 * data.answered) / data.total_queries) : 0;
   const Stat = ({ label, val, sub }: { label: string; val: any; sub?: string }) => (
-    <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-5">
-      <div className="text-2xl font-bold text-gray-900">{val}</div>
-      <div className="text-xs text-gray-500 mt-1">{label}</div>
+    <div className="bg-white dark:bg-slate-900 rounded-2xl border border-gray-200 dark:border-slate-700 shadow-sm p-5">
+      <div className="text-2xl font-bold text-gray-900 dark:text-slate-100">{val}</div>
+      <div className="text-xs text-gray-500 dark:text-slate-400 mt-1">{label}</div>
       {sub && <div className="text-[11px] text-gray-400 mt-0.5">{sub}</div>}
     </div>
   );
@@ -363,35 +363,35 @@ function AnalyticsTab() {
       </div>
 
       <div className="grid md:grid-cols-2 gap-6">
-        <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
-          <div className="px-6 py-4 border-b border-gray-100"><h2 className="text-sm font-semibold text-gray-900">Top specs queried</h2></div>
+        <div className="bg-white dark:bg-slate-900 rounded-2xl border border-gray-200 dark:border-slate-700 shadow-sm overflow-hidden">
+          <div className="px-6 py-4 border-b border-gray-100 dark:border-slate-800"><h2 className="text-sm font-semibold text-gray-900 dark:text-slate-100">Top specs queried</h2></div>
           <div className="p-4 space-y-1.5">
             {(data.top_sources || []).length === 0 && <p className="text-xs text-gray-400">No queries yet.</p>}
             {(data.top_sources || []).map((s: any, i: number) => (
               <div key={i} className="flex items-center justify-between text-sm">
-                <span className="text-gray-700 truncate mr-2">{s.name}</span>
+                <span className="text-gray-700 dark:text-slate-300 truncate mr-2">{s.name}</span>
                 <span className="text-gray-400 font-medium flex-shrink-0">{s.hits}</span>
               </div>
             ))}
           </div>
         </div>
-        <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
-          <div className="px-6 py-4 border-b border-gray-100">
-            <h2 className="text-sm font-semibold text-gray-900">Knowledge gaps</h2>
+        <div className="bg-white dark:bg-slate-900 rounded-2xl border border-gray-200 dark:border-slate-700 shadow-sm overflow-hidden">
+          <div className="px-6 py-4 border-b border-gray-100 dark:border-slate-800">
+            <h2 className="text-sm font-semibold text-gray-900 dark:text-slate-100">Knowledge gaps</h2>
             <p className="text-xs text-gray-400 mt-0.5">Questions we couldn't answer — candidates to ingest</p>
           </div>
           <div className="p-4 space-y-1.5 max-h-72 overflow-y-auto">
             {(data.gaps || []).length === 0 && <p className="text-xs text-gray-400">No gaps logged 🎉</p>}
             {(data.gaps || []).map((g: any, i: number) => (
-              <div key={i} className="text-sm text-gray-600 truncate">• {g.q}</div>
+              <div key={i} className="text-sm text-gray-600 dark:text-slate-400 truncate">• {g.q}</div>
             ))}
           </div>
         </div>
       </div>
 
-      <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-5 flex items-center justify-between gap-4">
+      <div className="bg-white dark:bg-slate-900 rounded-2xl border border-gray-200 dark:border-slate-700 shadow-sm p-5 flex items-center justify-between gap-4">
         <div>
-          <h2 className="text-sm font-semibold text-gray-900">Refresh knowledge base</h2>
+          <h2 className="text-sm font-semibold text-gray-900 dark:text-slate-100">Refresh knowledge base</h2>
           <p className="text-xs text-gray-400 mt-0.5">Re-pull all source repos and rebuild the index. Heavy — run off-peak (or cron this endpoint).</p>
         </div>
         <button onClick={refreshKB} disabled={refreshing}
@@ -435,27 +435,27 @@ function PromptConfigCard() {
   };
 
   return (
-    <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
-      <div className="px-6 py-5 border-b border-gray-100">
-        <h2 className="text-sm font-semibold text-gray-900">Chat &amp; Prompt</h2>
+    <div className="bg-white dark:bg-slate-900 rounded-2xl border border-gray-200 dark:border-slate-700 shadow-sm overflow-hidden">
+      <div className="px-6 py-5 border-b border-gray-100 dark:border-slate-800">
+        <h2 className="text-sm font-semibold text-gray-900 dark:text-slate-100">Chat &amp; Prompt</h2>
         <p className="text-xs text-gray-400 mt-0.5">Retarget the assistant to any domain (TMF, MEF, …) — no code changes</p>
       </div>
       <div className="px-6 py-5 space-y-4">
         <div>
-          <label className="block text-xs font-semibold text-gray-500 mb-1.5">Domain / persona (drives the system prompt)</label>
+          <label className="block text-xs font-semibold text-gray-500 dark:text-slate-400 mb-1.5">Domain / persona (drives the system prompt)</label>
           <textarea value={persona} onChange={e => setPersona(e.target.value)} rows={2}
             placeholder="e.g. MEF LSO Sonata standards"
-            className="w-full border border-gray-200 rounded-xl px-3.5 py-2.5 text-sm text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-red-500" />
+            className="w-full border border-gray-200 dark:border-slate-700 rounded-xl px-3.5 py-2.5 text-sm text-gray-900 dark:text-slate-100 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-red-500" />
         </div>
         <div>
-          <label className="block text-xs font-semibold text-gray-500 mb-1.5">Input placeholder</label>
+          <label className="block text-xs font-semibold text-gray-500 dark:text-slate-400 mb-1.5">Input placeholder</label>
           <input value={placeholder} onChange={e => setPlaceholder(e.target.value)}
-            className="w-full border border-gray-200 rounded-xl px-3.5 py-2.5 text-sm text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-red-500" />
+            className="w-full border border-gray-200 dark:border-slate-700 rounded-xl px-3.5 py-2.5 text-sm text-gray-900 dark:text-slate-100 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-red-500" />
         </div>
         <div>
-          <label className="block text-xs font-semibold text-gray-500 mb-1.5">Starter questions (one per line)</label>
+          <label className="block text-xs font-semibold text-gray-500 dark:text-slate-400 mb-1.5">Starter questions (one per line)</label>
           <textarea value={suggestions} onChange={e => setSuggestions(e.target.value)} rows={5}
-            className="w-full border border-gray-200 rounded-xl px-3.5 py-2.5 text-sm text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-red-500 font-mono" />
+            className="w-full border border-gray-200 dark:border-slate-700 rounded-xl px-3.5 py-2.5 text-sm text-gray-900 dark:text-slate-100 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-red-500 font-mono" />
         </div>
         <button onClick={save} disabled={busy}
           className="bg-red-600 hover:bg-red-700 disabled:bg-gray-200 text-white text-sm font-semibold rounded-xl px-5 py-2.5 transition-colors">
@@ -522,9 +522,9 @@ function BrandingTab() {
   return (
     <div className="space-y-6">
       {/* Identity */}
-      <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
-        <div className="px-6 py-5 border-b border-gray-100">
-          <h2 className="text-sm font-semibold text-gray-900">Brand Identity</h2>
+      <div className="bg-white dark:bg-slate-900 rounded-2xl border border-gray-200 dark:border-slate-700 shadow-sm overflow-hidden">
+        <div className="px-6 py-5 border-b border-gray-100 dark:border-slate-800">
+          <h2 className="text-sm font-semibold text-gray-900 dark:text-slate-100">Brand Identity</h2>
           <p className="text-xs text-gray-400 mt-0.5">Name and tagline shown across the platform</p>
         </div>
         <div className="px-6 py-5 space-y-4">
@@ -535,16 +535,16 @@ function BrandingTab() {
             <div key={f.label}>
               <label className="block text-[11px] font-bold text-gray-400 uppercase tracking-widest mb-1.5">{f.label}</label>
               <input value={f.val} onChange={e => f.set(e.target.value)} placeholder={f.ph}
-                className="w-full border border-gray-200 rounded-xl px-3.5 py-2.5 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-red-500 focus:border-transparent transition-all" />
+                className="w-full border border-gray-200 dark:border-slate-700 rounded-xl px-3.5 py-2.5 text-sm text-gray-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-red-500 focus:border-transparent transition-all" />
             </div>
           ))}
         </div>
       </div>
 
       {/* Logo */}
-      <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
-        <div className="px-6 py-5 border-b border-gray-100">
-          <h2 className="text-sm font-semibold text-gray-900">Logo</h2>
+      <div className="bg-white dark:bg-slate-900 rounded-2xl border border-gray-200 dark:border-slate-700 shadow-sm overflow-hidden">
+        <div className="px-6 py-5 border-b border-gray-100 dark:border-slate-800">
+          <h2 className="text-sm font-semibold text-gray-900 dark:text-slate-100">Logo</h2>
           <p className="text-xs text-gray-400 mt-0.5">Replaces the letter icon in the sidebar</p>
         </div>
         <div className="px-6 py-5">
@@ -552,9 +552,9 @@ function BrandingTab() {
             className="hidden" onChange={e => { const f = e.target.files?.[0]; if (f) handleLogoFile(f); e.target.value = ""; }} />
           {logo ? (
             <div className="flex items-center gap-4">
-              <img src={logo} alt="Logo preview" className="w-16 h-16 rounded-xl object-contain border border-gray-200 bg-gray-50" />
+              <img src={logo} alt="Logo preview" className="w-16 h-16 rounded-xl object-contain border border-gray-200 dark:border-slate-700 bg-gray-50 dark:bg-slate-800" />
               <div>
-                <p className="text-sm font-medium text-gray-800">Logo uploaded</p>
+                <p className="text-sm font-medium text-gray-800 dark:text-slate-200">Logo uploaded</p>
                 <p className="text-xs text-gray-400 mt-0.5">Shown in the sidebar instead of the letter icon</p>
                 <div className="flex gap-3 mt-2">
                   <button onClick={() => logoRef.current?.click()} className="text-sm font-semibold text-red-600 hover:text-red-700 transition-colors">Change</button>
@@ -567,14 +567,14 @@ function BrandingTab() {
               onClick={() => logoRef.current?.click()}
               onDragOver={e => e.preventDefault()}
               onDrop={e => { e.preventDefault(); const f = e.dataTransfer.files[0]; if (f) handleLogoFile(f); }}
-              className="border-2 border-dashed border-gray-200 rounded-2xl p-8 text-center hover:border-red-300 hover:bg-red-50/30 transition-all cursor-pointer group"
+              className="border-2 border-dashed border-gray-200 dark:border-slate-700 rounded-2xl p-8 text-center hover:border-red-300 hover:bg-red-50/30 transition-all cursor-pointer group"
             >
-              <div className="w-12 h-12 bg-gray-100 group-hover:bg-red-100 rounded-2xl flex items-center justify-center mx-auto mb-3 transition-colors">
+              <div className="w-12 h-12 bg-gray-100 dark:bg-slate-800 group-hover:bg-red-100 rounded-2xl flex items-center justify-center mx-auto mb-3 transition-colors">
                 <svg className="w-6 h-6 text-gray-400 group-hover:text-red-500 transition-colors" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.5">
                   <path strokeLinecap="round" strokeLinejoin="round" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/>
                 </svg>
               </div>
-              <p className="text-sm font-medium text-gray-600 group-hover:text-red-600 transition-colors">Drop your logo here, or click to browse</p>
+              <p className="text-sm font-medium text-gray-600 dark:text-slate-400 group-hover:text-red-600 transition-colors">Drop your logo here, or click to browse</p>
               <p className="text-xs text-gray-400 mt-1">PNG, SVG, JPG · max 2 MB</p>
             </div>
           )}
@@ -582,9 +582,9 @@ function BrandingTab() {
       </div>
 
       {/* Primary color */}
-      <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
-        <div className="px-6 py-5 border-b border-gray-100">
-          <h2 className="text-sm font-semibold text-gray-900">Primary Color</h2>
+      <div className="bg-white dark:bg-slate-900 rounded-2xl border border-gray-200 dark:border-slate-700 shadow-sm overflow-hidden">
+        <div className="px-6 py-5 border-b border-gray-100 dark:border-slate-800">
+          <h2 className="text-sm font-semibold text-gray-900 dark:text-slate-100">Primary Color</h2>
           <p className="text-xs text-gray-400 mt-0.5">Updates buttons, badges and accents platform-wide in real-time</p>
         </div>
         <div className="px-6 py-5 space-y-4">
@@ -596,32 +596,32 @@ function BrandingTab() {
             ))}
           </div>
           <div className="flex items-center gap-3">
-            <label className="text-xs text-gray-500 font-medium flex-shrink-0">Custom hex</label>
-            <div className="flex items-center gap-2 border border-gray-200 rounded-xl px-3 py-2 bg-white">
+            <label className="text-xs text-gray-500 dark:text-slate-400 font-medium flex-shrink-0">Custom hex</label>
+            <div className="flex items-center gap-2 border border-gray-200 dark:border-slate-700 rounded-xl px-3 py-2 bg-white">
               <input type="color" value={color} onChange={e => setColor(e.target.value)}
                 className="w-5 h-5 rounded cursor-pointer border-0 bg-transparent" />
-              <span className="text-sm font-mono text-gray-600">{color.toUpperCase()}</span>
+              <span className="text-sm font-mono text-gray-600 dark:text-slate-400">{color.toUpperCase()}</span>
             </div>
           </div>
         </div>
       </div>
 
       {/* Live preview */}
-      <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
-        <div className="px-6 py-5 border-b border-gray-100">
-          <h2 className="text-sm font-semibold text-gray-900">Live Preview</h2>
+      <div className="bg-white dark:bg-slate-900 rounded-2xl border border-gray-200 dark:border-slate-700 shadow-sm overflow-hidden">
+        <div className="px-6 py-5 border-b border-gray-100 dark:border-slate-800">
+          <h2 className="text-sm font-semibold text-gray-900 dark:text-slate-100">Live Preview</h2>
           <p className="text-xs text-gray-400 mt-0.5">This is what the header will look like</p>
         </div>
         <div className="px-6 py-5">
-          <div className="border border-gray-100 rounded-xl overflow-hidden shadow-sm">
-            <div className="flex items-center justify-between px-4 py-3 bg-white border-b border-gray-100">
+          <div className="border border-gray-100 dark:border-slate-800 rounded-xl overflow-hidden shadow-sm">
+            <div className="flex items-center justify-between px-4 py-3 bg-white dark:bg-slate-900 border-b border-gray-100 dark:border-slate-800">
               <div className="flex items-center gap-2.5">
                 <div className="w-8 h-8 rounded-lg flex items-center justify-center text-white text-sm font-extrabold shadow-sm"
                   style={{ backgroundColor: color }}>
                   {(company || "S")[0].toUpperCase()}
                 </div>
                 <div>
-                  <div className="font-bold text-gray-900 text-sm">{company || "Your Company"}</div>
+                  <div className="font-bold text-gray-900 dark:text-slate-100 text-sm">{company || "Your Company"}</div>
                   <div className="text-gray-400 text-xs">{tagline || "Your tagline"}</div>
                 </div>
               </div>
@@ -630,8 +630,8 @@ function BrandingTab() {
                   style={{ backgroundColor: color }}>Ask →</button>
               </div>
             </div>
-            <div className="bg-gray-50 px-4 py-8 text-center">
-              <div className="text-xl font-bold text-gray-800">{company || "Your Company"}</div>
+            <div className="bg-gray-50 dark:bg-slate-800 px-4 py-8 text-center">
+              <div className="text-xl font-bold text-gray-800 dark:text-slate-200">{company || "Your Company"}</div>
               <div className="text-gray-400 text-sm mt-1">{tagline || "Your tagline here"}</div>
             </div>
           </div>
@@ -730,7 +730,7 @@ function RBACTab() {
   const roleMeta: Record<UserRole, { desc: string; color: string }> = {
     admin:   { desc: "Full platform access. Cannot be restricted.", color: "border-red-200 bg-red-50" },
     analyst: { desc: "Query, upload documents and view analytics.",  color: "border-blue-200 bg-blue-50" },
-    viewer:  { desc: "Read-only access to chat and documents.",      color: "border-gray-200 bg-gray-50" },
+    viewer:  { desc: "Read-only access to chat and documents.",      color: "border-gray-200 dark:border-slate-700 bg-gray-50 dark:bg-slate-800" },
   };
 
   return (
@@ -739,21 +739,21 @@ function RBACTab() {
         {(["admin","analyst","viewer"] as UserRole[]).map(r => (
           <div key={r} className={`rounded-2xl border p-5 ${roleMeta[r].color}`}>
             <div className={`text-xs font-bold px-2 py-0.5 rounded-full capitalize w-fit mb-2 ${ROLE_BADGE[r]}`}>{r}</div>
-            <p className="text-xs text-gray-500">{roleMeta[r].desc}</p>
+            <p className="text-xs text-gray-500 dark:text-slate-400">{roleMeta[r].desc}</p>
             <p className="text-xs text-gray-400 mt-2">{counts[r]} user{counts[r] !== 1 ? "s" : ""}</p>
           </div>
         ))}
       </div>
 
-      <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
-        <div className="px-6 py-5 border-b border-gray-100">
-          <h2 className="text-sm font-semibold text-gray-900">Permissions Matrix</h2>
+      <div className="bg-white dark:bg-slate-900 rounded-2xl border border-gray-200 dark:border-slate-700 shadow-sm overflow-hidden">
+        <div className="px-6 py-5 border-b border-gray-100 dark:border-slate-800">
+          <h2 className="text-sm font-semibold text-gray-900 dark:text-slate-100">Permissions Matrix</h2>
           <p className="text-xs text-gray-400 mt-0.5">Analyst and Viewer permissions are editable. Click Save to persist.</p>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full">
             <thead>
-              <tr className="bg-gray-50 border-b border-gray-100">
+              <tr className="bg-gray-50 dark:bg-slate-800 border-b border-gray-100 dark:border-slate-800">
                 <th className="text-left text-[11px] font-bold text-gray-400 uppercase tracking-widest px-6 py-3.5 w-1/2">Permission</th>
                 {(["admin","analyst","viewer"] as UserRole[]).map(r => (
                   <th key={r} className="text-center text-[11px] font-bold uppercase tracking-widest px-4 py-3.5">
@@ -764,9 +764,9 @@ function RBACTab() {
             </thead>
             <tbody className="divide-y divide-gray-50">
               {PERMISSIONS.map(p => (
-                <tr key={p.key} className="hover:bg-gray-50/60 transition-colors">
+                <tr key={p.key} className="hover:bg-gray-50 dark:bg-slate-800/60 transition-colors">
                   <td className="px-6 py-3.5">
-                    <div className="text-sm font-medium text-gray-800">{p.label}</div>
+                    <div className="text-sm font-medium text-gray-800 dark:text-slate-200">{p.label}</div>
                     <div className="text-xs text-gray-400">{p.desc}</div>
                   </td>
                   {(["admin","analyst","viewer"] as UserRole[]).map(r => {
@@ -815,14 +815,14 @@ export default function AdminPage() {
   if (user?.role !== "admin") {
     return (
       <AppShell>
-        <div className="flex-1 flex items-center justify-center bg-gray-50 h-full">
+        <div className="flex-1 flex items-center justify-center bg-gray-50 dark:bg-slate-800 h-full">
           <div className="text-center">
             <div className="w-16 h-16 bg-red-100 rounded-2xl flex items-center justify-center mx-auto mb-4">
               <svg className="w-8 h-8 text-red-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.5">
                 <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.962-.833-2.732 0L4.082 16.5c-.77.833.192 2.5 1.732 2.5z"/>
               </svg>
             </div>
-            <h2 className="text-lg font-semibold text-gray-900">Access restricted</h2>
+            <h2 className="text-lg font-semibold text-gray-900 dark:text-slate-100">Access restricted</h2>
             <p className="text-sm text-gray-400 mt-1">You need Admin role to view this page.</p>
           </div>
         </div>
@@ -840,24 +840,24 @@ export default function AdminPage() {
   return (
     <AppShell>
       <div className="flex flex-col h-full">
-        <header className="flex items-center justify-between px-6 py-4 bg-white border-b border-gray-200 flex-shrink-0">
+        <header className="flex items-center justify-between px-6 py-4 bg-white dark:bg-slate-900 border-b border-gray-200 dark:border-slate-700 flex-shrink-0">
           <div>
-            <h1 className="text-base font-semibold text-gray-900">Administration</h1>
+            <h1 className="text-base font-semibold text-gray-900 dark:text-slate-100">Administration</h1>
             <p className="text-xs text-gray-400 mt-0.5">Manage users, branding and access control</p>
           </div>
           <span className="text-[11px] font-bold bg-red-100 text-red-700 px-2.5 py-1 rounded-full">Admin only</span>
         </header>
 
-        <div className="flex border-b border-gray-200 bg-white px-6 flex-shrink-0">
+        <div className="flex border-b border-gray-200 dark:border-slate-700 bg-white px-6 flex-shrink-0">
           {tabs.map(t => (
             <button key={t.id} onClick={() => setTab(t.id)}
               className={`px-5 py-3.5 text-sm font-medium border-b-2 transition-all -mb-px ${
-                tab === t.id ? "border-red-600 text-red-600" : "border-transparent text-gray-500 hover:text-gray-800"
+                tab === t.id ? "border-red-600 text-red-600" : "border-transparent text-gray-500 dark:text-slate-400 hover:text-gray-800 dark:text-slate-200"
               }`}>{t.label}</button>
           ))}
         </div>
 
-        <div className="flex-1 overflow-y-auto bg-gray-50">
+        <div className="flex-1 overflow-y-auto bg-gray-50 dark:bg-slate-800">
           <div className="max-w-5xl mx-auto px-6 py-8">
             {tab === "users"    && <UserManagementTab />}
             {tab === "branding" && (<><BrandingTab /><div className="mt-6"><PromptConfigCard /></div></>)}

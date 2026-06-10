@@ -1,8 +1,16 @@
 @import "tailwindcss";
 
+/* Class-based dark mode (Tailwind v4): `dark:` applies under <html class="dark">. */
+@custom-variant dark (&:where(.dark, .dark *));
+
 :root {
   --background: #ffffff;
   --foreground: #171717;
+}
+
+.dark {
+  --background: #0b1120;
+  --foreground: #e2e8f0;
 }
 
 @theme inline {
@@ -12,12 +20,9 @@
   --font-mono: var(--font-geist-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
-}
+/* Native form controls / scrollbars follow the theme. */
+html { color-scheme: light; }
+html.dark { color-scheme: dark; }
 
 body {
   background: var(--background);

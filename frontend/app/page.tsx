@@ -50,7 +50,7 @@ function stripMd(text: string) {
 }
 
 // Render answer markdown (handles fenced ``` code blocks, headings, bullets, inline code/bold)
-function renderMarkdown(text: string) {
+function renderMarkdown(text: string, sources: Source[] = [], onCite?: (n: number) => void) {
   const lines = text.split("\n");
   const nodes: React.ReactNode[] = [];
   let key = 0;
@@ -86,13 +86,13 @@ function renderMarkdown(text: string) {
           <table className="text-xs border-collapse">
             <thead>
               <tr>{header.map((h, hi) => (
-                <th key={hi} className="border border-gray-200 bg-gray-50 px-2.5 py-1.5 text-left font-semibold text-gray-700 whitespace-nowrap">{inlineFormat(h)}</th>
+                <th key={hi} className="border border-gray-200 dark:border-slate-700 bg-gray-50 dark:bg-slate-800 px-2.5 py-1.5 text-left font-semibold text-gray-700 dark:text-slate-200 whitespace-nowrap">{inlineFormat(h, sources, onCite)}</th>
               ))}</tr>
             </thead>
             <tbody>
               {rows.map((r, ri) => (
                 <tr key={ri}>{r.map((c, ci) => (
-                  <td key={ci} className="border border-gray-200 px-2.5 py-1.5 text-gray-700 align-top">{inlineFormat(c)}</td>
+                  <td key={ci} className="border border-gray-200 px-2.5 py-1.5 text-gray-700 align-top dark:border-slate-700 dark:text-slate-300">{inlineFormat(c, sources, onCite)}</td>
                 ))}</tr>
               ))}
             </tbody>
@@ -105,36 +105,54 @@ function renderMarkdown(text: string) {
     if (!line.trim()) { nodes.push(<div key={key++} className="h-2" />); i++; continue; }
 
     if (line.startsWith("## ") || line.startsWith("### ")) {
-      nodes.push(<p key={key++} className="font-semibold text-gray-900 mt-3 mb-1">{line.replace(/^#{2,3}\s/, "")}</p>);
+      nodes.push(<p key={key++} className="font-semibold text-gray-900 dark:text-slate-100 mt-3 mb-1">{line.replace(/^#{2,3}\s/, "")}</p>);
     } else if (line.match(/^[\*\-\+]\s/)) {
       nodes.push(
         <div key={key++} className="flex gap-2 my-0.5 ml-1">
           <span className="text-red-500 flex-shrink-0 mt-0.5">•</span>
-          <span>{inlineFormat(line.slice(2))}</span>
+          <span>{inlineFormat(line.slice(2), sources, onCite)}</span>
         </div>
       );
     } else if (line.match(/^\s{2,}[\+\-\*]\s/)) {
       nodes.push(
         <div key={key++} className="flex gap-2 my-0.5 ml-6">
           <span className="text-gray-400 flex-shrink-0">◦</span>
-          <span>{inlineFormat(line.replace(/^\s+[\+\-\*]\s/, ""))}</span>
+          <span>{inlineFormat(line.replace(/^\s+[\+\-\*]\s/, ""), sources, onCite)}</span>
         </div>
       );
     } else {
-      nodes.push(<p key={key++} className="my-0.5 leading-relaxed">{inlineFormat(line)}</p>);
+      nodes.push(<p key={key++} className="my-0.5 leading-relaxed">{inlineFormat(line, sources, onCite)}</p>);
     }
     i++;
   }
   return nodes;
 }
 
-function inlineFormat(text: string): React.ReactNode {
-  const parts = text.split(/(`[^`]+`|\*\*[^*]+\*\*)/g);
+function inlineFormat(text: string, sources: Source[] = [], onCite?: (n: number) => void): React.ReactNode {
+  const parts = text.split(/(`[^`]+`|\*\*[^*]+\*\*|\[\d+(?:\s*,\s*\d+)*\])/g);
   return parts.map((part, i) => {
     if (part.startsWith("`") && part.endsWith("`"))
-      return <code key={i} className="bg-gray-100 text-red-700 font-mono text-xs px-1.5 py-0.5 rounded">{part.slice(1, -1)}</code>;
+      return <code key={i} className="bg-gray-100 dark:bg-slate-700 text-red-700 dark:text-red-300 font-mono text-xs px-1.5 py-0.5 rounded">{part.slice(1, -1)}</code>;
     if (part.startsWith("**") && part.endsWith("**"))
-      return <strong key={i} className="font-semibold text-gray-900">{part.slice(2, -2)}</strong>;
+      return <strong key={i} className="font-semibold text-gray-900 dark:text-slate-100">{part.slice(2, -2)}</strong>;
+    const cite = part.match(/^\[(\d+(?:\s*,\s*\d+)*)\]$/);
+    if (cite) {
+      const nums = cite[1].split(",").map(s => parseInt(s.trim(), 10));
+      return (
+        <span key={i} className="inline-flex gap-0.5 align-super mx-0.5">
+          {nums.map((n, j) => {
+            const src = sources[n - 1];
+            if (!src) return <span key={j} className="text-[10px] text-gray-400">[{n}]</span>;
+            return (
+              <button key={j} onClick={() => onCite?.(n)} title={stripMd(src.name)}
+                className="text-[10px] font-semibold text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-500/15 hover:bg-red-100 dark:hover:bg-red-500/25 border border-red-200 dark:border-red-500/30 rounded px-1 leading-tight transition-colors">
+                {n}
+              </button>
+            );
+          })}
+        </span>
+      );
+    }
     return part;
   });
 }
@@ -152,22 +170,22 @@ function SourceDrawer({ source, onClose }: { source: Source; onClose: () => void
   return (
     <>
       <div className="fixed inset-0 bg-black/30 z-40 backdrop-blur-sm" onClick={onClose} />
-      <div className="fixed right-0 top-0 h-full w-full max-w-lg bg-white z-50 shadow-2xl flex flex-col"
+      <div className="fixed right-0 top-0 h-full w-full max-w-lg bg-white dark:bg-slate-900 z-50 shadow-2xl flex flex-col"
            style={{ animation: "slideIn 0.2s ease-out" }}>
         <style>{`@keyframes slideIn { from { transform: translateX(100%); } to { transform: translateX(0); } }`}</style>
 
         {/* Header */}
-        <div className="flex items-start justify-between p-5 border-b border-gray-100 bg-gray-50">
+        <div className="flex items-start justify-between p-5 border-b border-gray-100 dark:border-slate-800 bg-gray-50 dark:bg-slate-800/50">
           <div className="flex-1 min-w-0 pr-3">
             <div className="flex items-center gap-2 mb-1.5">
               <span className="w-2 h-2 rounded-full bg-red-500 flex-shrink-0" />
               <span className="text-xs font-bold text-red-600 uppercase tracking-widest">Source Document</span>
             </div>
-            <h3 className="font-semibold text-gray-900 text-sm leading-snug">{cleanName}</h3>
+            <h3 className="font-semibold text-gray-900 dark:text-slate-100 text-sm leading-snug">{cleanName}</h3>
             <p className="text-xs text-gray-400 mt-1 font-mono">{source.file} · chunk {source.chunk}</p>
           </div>
           <button onClick={onClose}
-            className="w-7 h-7 rounded-full hover:bg-gray-200 flex items-center justify-center text-gray-400 hover:text-gray-700 transition-colors flex-shrink-0 text-lg">
+            className="w-7 h-7 rounded-full hover:bg-gray-200 dark:hover:bg-slate-700 flex items-center justify-center text-gray-400 hover:text-gray-700 dark:hover:text-slate-200 transition-colors flex-shrink-0 text-lg">
             ×
           </button>
         </div>
@@ -177,14 +195,14 @@ function SourceDrawer({ source, onClose }: { source: Source; onClose: () => void
           {/* Link to actual source */}
           {source.url ? (
             <a href={source.url} target="_blank" rel="noopener noreferrer"
-              className="flex items-center gap-3 p-3.5 bg-white border border-gray-200 hover:border-red-300 hover:bg-red-50 rounded-xl transition-all group">
+              className="flex items-center gap-3 p-3.5 bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 hover:border-red-300 dark:hover:border-red-500/40 hover:bg-red-50 dark:hover:bg-red-500/10 rounded-xl transition-all group">
               <div className="w-8 h-8 bg-gray-100 group-hover:bg-red-100 rounded-lg flex items-center justify-center flex-shrink-0 transition-colors">
                 <svg className="w-4 h-4 text-gray-500 group-hover:text-red-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
                 </svg>
               </div>
               <div className="flex-1 min-w-0">
-                <p className="text-sm font-medium text-gray-700 group-hover:text-red-700 transition-colors">View on GitHub</p>
+                <p className="text-sm font-medium text-gray-700 dark:text-slate-200 group-hover:text-red-700 dark:group-hover:text-red-400 transition-colors">View on GitHub</p>
                 <p className="text-xs text-gray-400 truncate">{source.url.replace("https://github.com/", "")}</p>
               </div>
               <svg className="w-4 h-4 text-gray-300 group-hover:text-red-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -192,7 +210,7 @@ function SourceDrawer({ source, onClose }: { source: Source; onClose: () => void
               </svg>
             </a>
           ) : (
-            <div className="flex items-center gap-3 p-3.5 bg-gray-50 border border-gray-200 rounded-xl">
+            <div className="flex items-center gap-3 p-3.5 bg-gray-50 dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-xl">
               <div className="w-8 h-8 bg-gray-100 rounded-lg flex items-center justify-center flex-shrink-0">
                 <svg className="w-4 h-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
@@ -208,15 +226,15 @@ function SourceDrawer({ source, onClose }: { source: Source; onClose: () => void
           {/* Retrieved chunk */}
           <div>
             <p className="text-xs font-semibold text-gray-400 uppercase tracking-widest mb-2">Retrieved Chunk</p>
-            <div className="bg-gray-50 rounded-xl p-4 border border-gray-100">
-              <pre className="text-xs text-gray-700 whitespace-pre-wrap font-mono leading-relaxed">{source.preview}</pre>
+            <div className="bg-gray-50 dark:bg-slate-800 rounded-xl p-4 border border-gray-100 dark:border-slate-700">
+              <pre className="text-xs text-gray-700 dark:text-slate-300 whitespace-pre-wrap font-mono leading-relaxed">{source.preview}</pre>
             </div>
             <p className="text-xs text-gray-400 mt-2 text-center">Retrieved via semantic similarity search · nomic-embed-text</p>
           </div>
         </div>
 
         {/* Footer */}
-        <div className="p-4 border-t border-gray-100 bg-gray-50 flex items-center justify-between">
+        <div className="p-4 border-t border-gray-100 dark:border-slate-800 bg-gray-50 dark:bg-slate-800/50 flex items-center justify-between">
           <div className="flex items-center gap-2">
             <span className="bg-red-600 text-white text-xs px-2 py-0.5 rounded font-bold">SynaptDI</span>
             <span className="text-xs text-gray-400">Synapt Domain Intelligence</span>
@@ -244,6 +262,8 @@ export default function Home() {
   });
   const [copiedIdx, setCopiedIdx] = useState<number | null>(null);
   const [feedbackIdx, setFeedbackIdx] = useState<Record<number, string>>({});
+  const [trace, setTrace] = useState<{ specs: string[]; sources: string[] } | null>(null);
+  const [followups, setFollowups] = useState<string[]>([]);
   const { activeId, setActiveId, refresh: refreshConvos, loadSignal, consume } = useConvos();
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef  = useRef<HTMLTextAreaElement>(null);
@@ -253,6 +273,7 @@ export default function Home() {
   // React to the sidebar: open a saved chat, or clear for a new one.
   useEffect(() => {
     if (!loadSignal) return;
+    setFollowups([]); setTrace(null);
     if (loadSignal.kind === "new") {
       setMessages([]); inputRef.current?.focus();
     } else if (loadSignal.kind === "open") {
@@ -302,6 +323,7 @@ export default function Home() {
   const runStream = useCallback(async (question: string, prior: Message[]) => {
     setLoading(true);
     stoppedRef.current = false;
+    setTrace(null); setFollowups([]);
     const controller = new AbortController();
     abortRef.current = controller;
     const timeout = setTimeout(() => controller.abort(), 180000);
@@ -315,6 +337,7 @@ export default function Home() {
       return copy;
     });
     let acc = "";
+    let hadError = false;
     let doneSources: Source[] | undefined;
     let doneLatency: number | undefined;
     const save = () => persistConvo([...prior,
@@ -343,12 +366,21 @@ export default function Home() {
           if (!line.trim()) continue;
           let evt: any;
           try { evt = JSON.parse(line); } catch { continue; }
-          if (evt.type === "token")      { acc += evt.text; setLast({ content: acc }); }
+          if (evt.type === "context")    { setTrace({ specs: evt.specs || [], sources: evt.sources || [] }); }
+          else if (evt.type === "token") { acc += evt.text; setLast({ content: acc }); }
           else if (evt.type === "done")  { doneSources = evt.sources; doneLatency = evt.latency_ms; setLast({ sources: evt.sources, latency_ms: evt.latency_ms }); }
-          else if (evt.type === "error") { acc = evt.text; setLast({ content: acc, error: true }); }
+          else if (evt.type === "error") { acc = evt.text; hadError = true; setLast({ content: acc, error: true }); }
         }
       }
       save();
+      // Suggest related questions (async; never blocks the answer).
+      if (acc && !hadError && !acc.toLowerCase().startsWith("i don't have enough")) {
+        fetch(`${API}/followups`, { method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ question, answer: acc }) })
+          .then(r => (r.ok ? r.json() : null))
+          .then(d => { if (d && Array.isArray(d.questions)) setFollowups(d.questions.slice(0, 3)); })
+          .catch(() => {});
+      }
     } catch (e: any) {
       if (e.name === "AbortError" && stoppedRef.current) {
         setLast({ content: acc ? acc + "\n\n_(stopped)_" : "_(stopped)_" });
@@ -387,8 +419,42 @@ export default function Home() {
 
   const stop = () => { stoppedRef.current = true; abortRef.current?.abort(); };
 
+  // Keyboard: "/" focuses the composer, Esc stops generation.
+  useEffect(() => {
+    const h = (e: KeyboardEvent) => {
+      const el = e.target as HTMLElement | null;
+      const typing = !!el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable);
+      if (e.key === "/" && !typing) { e.preventDefault(); inputRef.current?.focus(); }
+      else if (e.key === "Escape" && loading) { e.preventDefault(); stop(); }
+    };
+    window.addEventListener("keydown", h);
+    return () => window.removeEventListener("keydown", h);
+  }, [loading]);
+
   const copyMsg = (i: number, text: string) => {
     try { navigator.clipboard?.writeText(stripMd(text)); setCopiedIdx(i); setTimeout(() => setCopiedIdx(null), 1500); } catch {}
+  };
+
+  // Export the whole conversation as clean Markdown (for Teams / email / Confluence).
+  const exportConversation = () => {
+    if (!messages.length) return;
+    const ts = new Date();
+    const out: string[] = ["# SynaptDI conversation", `_Exported ${ts.toLocaleString()}_`, ""];
+    messages.forEach(m => {
+      if (m.role === "user") { out.push("## 🧑 You", "", m.content, ""); return; }
+      out.push("## 🤖 SynaptDI", "", m.content || "_(no answer)_", "");
+      if (m.sources?.length) {
+        out.push("**Sources:** " + m.sources.map(s => s.url ? `[${stripMd(s.name)}](${s.url})` : stripMd(s.name)).join(" · "), "");
+      }
+      out.push("---", "");
+    });
+    const blob = new Blob([out.join("\n")], { type: "text/markdown;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `synaptdi-chat-${ts.toISOString().slice(0, 10)}.md`;
+    document.body.appendChild(a); a.click(); a.remove();
+    URL.revokeObjectURL(url);
   };
 
   const sendFeedback = (i: number, rating: "up" | "down") => {
@@ -404,22 +470,29 @@ export default function Home() {
 
   return (
     <AppShell>
-      <div className="flex flex-col h-full bg-white">
+      <div className="flex flex-col h-full bg-white dark:bg-slate-950">
 
         {/* Header */}
-        <header className="flex items-center justify-between px-6 py-3 bg-white border-b border-gray-200 shadow-sm flex-shrink-0 z-10">
+        <header className="flex items-center justify-between px-6 py-3 bg-white dark:bg-slate-900 border-b border-gray-200 dark:border-slate-800 shadow-sm flex-shrink-0 z-10">
           <div className="flex items-center gap-3">
-            <span className="font-semibold text-gray-800 text-sm tracking-tight">Chat</span>
+            <span className="font-semibold text-gray-800 dark:text-slate-100 text-sm tracking-tight">Chat</span>
             {stats?.chunks_indexed != null && (
-              <span className="text-xs text-gray-400 bg-gray-100 px-2.5 py-1 rounded-full hidden sm:inline-block">
+              <span className="text-xs text-gray-400 dark:text-slate-400 bg-gray-100 dark:bg-slate-800 px-2.5 py-1 rounded-full hidden sm:inline-block">
                 {stats.chunks_indexed.toLocaleString()} chunks indexed
               </span>
             )}
           </div>
           <div className="flex items-center gap-3">
             {messages.length > 0 && (
+              <button onClick={exportConversation} title="Export this conversation as Markdown"
+                className="text-xs text-gray-400 hover:text-gray-600 dark:text-slate-500 dark:hover:text-slate-300 px-2.5 py-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-slate-800 transition-colors flex items-center gap-1.5">
+                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
+                Export
+              </button>
+            )}
+            {messages.length > 0 && (
               <button onClick={() => setMessages([])}
-                className="text-xs text-gray-400 hover:text-gray-600 px-2.5 py-1.5 rounded-lg hover:bg-gray-100 transition-colors">
+                className="text-xs text-gray-400 hover:text-gray-600 dark:text-slate-500 dark:hover:text-slate-300 px-2.5 py-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-slate-800 transition-colors">
                 Clear chat
               </button>
             )}
@@ -445,20 +518,21 @@ export default function Home() {
                     </div>
                   )}
                   <div>
-                    <h2 className="text-xl font-bold text-gray-900">What would you like to know?</h2>
+                    <h2 className="text-xl font-bold text-gray-900 dark:text-white">What would you like to know?</h2>
                     <p className="text-gray-400 text-sm mt-1">{branding.tagline}</p>
                   </div>
                   {stats?.chunks_indexed != null && (
-                    <div className="flex items-center gap-1.5 text-xs text-gray-400 bg-gray-50 border border-gray-200 px-3 py-1.5 rounded-full">
+                    <div className="flex items-center gap-1.5 text-xs text-gray-400 dark:text-slate-400 bg-gray-50 dark:bg-slate-800/60 border border-gray-200 dark:border-slate-700 px-3 py-1.5 rounded-full">
                       <span className="w-1.5 h-1.5 rounded-full bg-green-500" />
                       {stats.chunks_indexed.toLocaleString()} chunks indexed and ready
                     </div>
                   )}
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 w-full max-w-2xl">
+                  <p className="col-span-full text-xs font-semibold text-gray-400 uppercase tracking-wider text-center mb-0.5">Popular questions</p>
                   {chatCfg.suggestions.map((q, i) => (
                     <button key={i} onClick={() => ask(q)}
-                      className="text-left text-sm text-gray-600 bg-white hover:bg-red-50 hover:text-red-700 border border-gray-200 hover:border-red-200 hover:shadow-sm rounded-xl px-4 py-3.5 transition-all">
+                      className="text-left text-sm text-gray-600 dark:text-slate-300 bg-white dark:bg-slate-900 hover:bg-red-50 dark:hover:bg-slate-800 hover:text-red-700 dark:hover:text-red-300 border border-gray-200 dark:border-slate-700 hover:border-red-200 dark:hover:border-slate-600 hover:shadow-sm rounded-xl px-4 py-3.5 transition-all">
                       <span className="text-red-500 mr-2 text-xs">→</span>{q}
                     </button>
                   ))}
@@ -484,17 +558,28 @@ export default function Home() {
                     msg.role === "user"
                       ? "bg-red-600 text-white rounded-tr-sm"
                       : msg.error
-                      ? "bg-red-50 text-red-800 border border-red-200 rounded-tl-sm"
-                      : "bg-gray-50 text-gray-800 border border-gray-100 rounded-tl-sm"
+                      ? "bg-red-50 dark:bg-red-950/40 text-red-800 dark:text-red-300 border border-red-200 dark:border-red-900/50 rounded-tl-sm"
+                      : "bg-gray-50 dark:bg-slate-800 text-gray-800 dark:text-slate-100 border border-gray-100 dark:border-slate-700 rounded-tl-sm"
                   }`}>
                     {msg.role === "assistant" && !msg.error
                       ? (msg.content
-                          ? renderMarkdown(msg.content)
-                          : <span className="flex items-center gap-1.5 py-0.5">
-                              {[0, 150, 300].map(d => (
-                                <span key={d} className="w-2 h-2 rounded-full bg-red-400 animate-bounce" style={{ animationDelay: `${d}ms` }} />
-                              ))}
-                            </span>)
+                          ? renderMarkdown(msg.content, msg.sources || [], (n) => { const s = (msg.sources || [])[n - 1]; if (s) setActiveSource(s); })
+                          : (trace && (trace.specs.length > 0 || trace.sources.length > 0)
+                              ? <span className="flex items-center gap-2 py-0.5 text-gray-500 dark:text-slate-400">
+                                  <span className="flex gap-1">
+                                    {[0, 150, 300].map(d => (
+                                      <span key={d} className="w-1.5 h-1.5 rounded-full bg-red-400 animate-bounce" style={{ animationDelay: `${d}ms` }} />
+                                    ))}
+                                  </span>
+                                  <span className="text-xs">
+                                    Searching {(trace.specs.length ? trace.specs : trace.sources).slice(0, 4).map(stripMd).join(", ")}{(trace.specs.length ? trace.specs : trace.sources).length > 4 ? "…" : ""}
+                                  </span>
+                                </span>
+                              : <span className="flex items-center gap-1.5 py-0.5">
+                                  {[0, 150, 300].map(d => (
+                                    <span key={d} className="w-2 h-2 rounded-full bg-red-400 animate-bounce" style={{ animationDelay: `${d}ms` }} />
+                                  ))}
+                                </span>))
                       : <span>{msg.content}</span>}
                   </div>
 
@@ -506,20 +591,20 @@ export default function Home() {
                           {src.url ? (
                             <>
                               <a href={src.url} target="_blank" rel="noopener noreferrer"
-                                className="group flex items-center gap-1.5 text-xs bg-white border border-gray-200 text-gray-500 hover:text-red-600 hover:border-red-300 hover:bg-red-50 rounded-l-full px-3 py-1 transition-all">
+                                className="group flex items-center gap-1.5 text-xs bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 text-gray-500 dark:text-slate-300 hover:text-red-600 dark:hover:text-red-400 hover:border-red-300 dark:hover:border-red-500/40 hover:bg-red-50 dark:hover:bg-red-500/10 rounded-l-full px-3 py-1 transition-all">
                                 <span className="w-1.5 h-1.5 rounded-full bg-red-500 flex-shrink-0" />
                                 {stripMd(src.name)}
                                 <span className="text-gray-300 group-hover:text-red-400">↗</span>
                               </a>
                               <button onClick={() => setActiveSource(src)}
-                                className="text-xs bg-white border border-l-0 border-gray-200 text-gray-400 hover:text-red-600 hover:border-red-300 hover:bg-red-50 rounded-r-full px-2 py-1 transition-all"
+                                className="text-xs bg-white dark:bg-slate-800 border border-l-0 border-gray-200 dark:border-slate-700 text-gray-400 dark:text-slate-400 hover:text-red-600 dark:hover:text-red-400 hover:border-red-300 dark:hover:border-red-500/40 hover:bg-red-50 dark:hover:bg-red-500/10 rounded-r-full px-2 py-1 transition-all"
                                 title="View chunk preview">
                                 ···
                               </button>
                             </>
                           ) : (
                             <button onClick={() => setActiveSource(src)}
-                              className="group flex items-center gap-1.5 text-xs bg-white border border-gray-200 text-gray-500 hover:text-red-600 hover:border-red-300 hover:bg-red-50 rounded-full px-3 py-1 transition-all">
+                              className="group flex items-center gap-1.5 text-xs bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 text-gray-500 dark:text-slate-300 hover:text-red-600 dark:hover:text-red-400 hover:border-red-300 dark:hover:border-red-500/40 hover:bg-red-50 dark:hover:bg-red-500/10 rounded-full px-3 py-1 transition-all">
                               <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${src.upload ? "bg-amber-500" : "bg-red-500"}`} />
                               {stripMd(src.name)}
                               {src.upload && <span className="text-amber-600 text-[10px] font-medium">· your doc</span>}
@@ -536,7 +621,7 @@ export default function Home() {
                   {msg.role === "assistant" && !msg.error && msg.content && (
                     <div className="mt-2 flex items-center gap-1">
                       <button onClick={() => copyMsg(i, msg.content)} title="Copy answer"
-                        className="text-xs text-gray-400 hover:text-gray-700 px-1.5 py-1 rounded hover:bg-gray-100 transition-colors flex items-center gap-1">
+                        className="text-xs text-gray-400 hover:text-gray-700 dark:text-slate-500 dark:hover:text-slate-200 px-1.5 py-1 rounded hover:bg-gray-100 dark:hover:bg-slate-800 transition-colors flex items-center gap-1">
                         {copiedIdx === i ? (
                           <><svg className="w-3.5 h-3.5 text-green-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><polyline points="20 6 9 17 4 12"/></svg>Copied</>
                         ) : (
@@ -545,15 +630,31 @@ export default function Home() {
                       </button>
                       {i === messages.length - 1 && !loading && (
                         <button onClick={regenerate} title="Regenerate answer"
-                          className="text-xs text-gray-400 hover:text-gray-700 px-1.5 py-1 rounded hover:bg-gray-100 transition-colors flex items-center gap-1">
+                          className="text-xs text-gray-400 hover:text-gray-700 dark:text-slate-500 dark:hover:text-slate-200 px-1.5 py-1 rounded hover:bg-gray-100 dark:hover:bg-slate-800 transition-colors flex items-center gap-1">
                           <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 11-2.12-9.36L23 10"/></svg>Regenerate
                         </button>
                       )}
-                      <span className="mx-1 w-px h-3.5 bg-gray-200" />
+                      <span className="mx-1 w-px h-3.5 bg-gray-200 dark:bg-slate-700" />
                       <button onClick={() => sendFeedback(i, "up")} title="Helpful"
                         className={`text-sm px-1 py-0.5 rounded hover:bg-gray-100 transition-colors ${feedbackIdx[i] === "up" ? "opacity-100" : "opacity-50 hover:opacity-100"}`}>👍</button>
                       <button onClick={() => sendFeedback(i, "down")} title="Not helpful"
                         className={`text-sm px-1 py-0.5 rounded hover:bg-gray-100 transition-colors ${feedbackIdx[i] === "down" ? "opacity-100" : "opacity-50 hover:opacity-100"}`}>👎</button>
+                    </div>
+                  )}
+
+                  {msg.role === "assistant" && !msg.error && msg.content && i === messages.length - 1 && !loading && followups.length > 0 && (
+                    <div className="mt-3.5">
+                      <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-1.5">Related</p>
+                      <div className="flex flex-col gap-1.5">
+                        {followups.map((fq, fi) => (
+                          <button key={fi} onClick={() => ask(fq)}
+                            className="group text-left text-sm text-gray-600 dark:text-slate-300 bg-white dark:bg-slate-800 hover:bg-red-50 dark:hover:bg-slate-700 hover:text-red-700 dark:hover:text-red-300 border border-gray-200 dark:border-slate-700 hover:border-red-200 dark:hover:border-slate-600 hover:shadow-sm rounded-lg px-3.5 py-2.5 transition-all flex items-center gap-2.5">
+                            <span className="text-red-400 group-hover:text-red-500 font-medium flex-shrink-0">+</span>
+                            <span className="flex-1">{fq}</span>
+                            <span className="text-gray-300 group-hover:text-red-400 flex-shrink-0">→</span>
+                          </button>
+                        ))}
+                      </div>
                     </div>
                   )}
                 </div>
@@ -565,7 +666,7 @@ export default function Home() {
         </main>
 
         {/* Input */}
-        <div className="border-t border-gray-200 bg-white px-4 py-4 flex-shrink-0">
+        <div className="border-t border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-4 py-4 flex-shrink-0">
           <div className="max-w-3xl mx-auto mb-2 flex items-center gap-1.5">
             <span className="text-xs text-gray-400 mr-0.5">Search:</span>
             {([["all", "Everything"], ["kb", "Knowledge Base"], ["docs", "My Documents"]] as const).map(([v, label]) => (
@@ -573,7 +674,7 @@ export default function Home() {
                 className={`text-xs px-2.5 py-1 rounded-full border transition-colors ${
                   scope === v
                     ? "bg-red-600 text-white border-red-600"
-                    : "bg-white text-gray-500 border-gray-200 hover:bg-gray-50"
+                    : "bg-white dark:bg-slate-800 text-gray-500 dark:text-slate-400 border-gray-200 dark:border-slate-700 hover:bg-gray-50 dark:hover:bg-slate-700"
                 }`}>
                 {label}
               </button>
@@ -583,7 +684,7 @@ export default function Home() {
             <textarea ref={inputRef} value={input}
               onChange={e => setInput(e.target.value)} onKeyDown={handleKey}
               placeholder={chatCfg.placeholder} rows={1} disabled={loading}
-              className="flex-1 resize-none border border-gray-200 rounded-xl px-4 py-3 text-sm text-gray-800 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-red-500 focus:border-transparent bg-gray-50 disabled:opacity-50"
+              className="flex-1 resize-none border border-gray-200 dark:border-slate-700 rounded-xl px-4 py-3 text-sm text-gray-800 dark:text-slate-100 placeholder-gray-400 dark:placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-red-500 focus:border-transparent bg-gray-50 dark:bg-slate-800 disabled:opacity-50"
               style={{ maxHeight: "120px" }}
               onInput={e => {
                 const t = e.target as HTMLTextAreaElement;
@@ -604,7 +705,7 @@ export default function Home() {
             )}
           </div>
           <p className="max-w-3xl mx-auto mt-2 text-center text-xs text-gray-400">
-            Answers grounded in TM Forum docs · Click any source to view chunk + GitHub link · SynaptDI — Enterprise domains at your fingertips
+            Grounded answers with inline citations · Press “/” to focus, “Esc” to stop · Click any [n] or source to view its chunk
           </p>
         </div>
       </div>

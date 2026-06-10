@@ -8,7 +8,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
 
   if (isLoading) {
     return (
-      <div className="flex items-center justify-center h-screen bg-white">
+      <div className="flex items-center justify-center h-screen bg-white dark:bg-slate-950">
         <div className="text-center">
           <div className="flex items-center gap-1.5 justify-center mb-3">
             {[0, 150, 300].map(d => (
@@ -25,7 +25,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   if (!user) return null;
 
   return (
-    <div className="flex h-screen bg-white overflow-hidden">
+    <div className="flex h-screen bg-white dark:bg-slate-950 overflow-hidden">
       <Sidebar />
       <div className="flex-1 min-w-0 flex flex-col overflow-hidden">
         {children}

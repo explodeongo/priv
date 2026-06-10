@@ -2,13 +2,17 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "./AuthProvider";
+import { useTheme } from "./ThemeContext";
+import { useConvos } from "./ConversationContext";
 
 // ── Command definitions ───────────────────────────────────────────────────────
 interface Command {
   label: string;
   desc: string;
-  href: string;
   icon: React.ReactNode;
+  href?: string;                  // navigation command
+  action?: () => void;            // action command
+  keepOpen?: boolean;             // keep palette open after running (e.g. theme cycle)
   adminOnly?: boolean;
   keywords?: string;
 }
@@ -61,8 +65,18 @@ const IUser = () => (
     <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>
   </svg>
 );
+const INew = () => (
+  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+  </svg>
+);
+const ITheme = () => (
+  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M12 3a6 6 0 0 0 0 12 6 6 0 0 1 0 6 9 9 0 1 1 0-18z"/>
+  </svg>
+);
 
-const COMMANDS: Command[] = [
+const NAV_COMMANDS: Command[] = [
   { label: "Chat",                    desc: "Open the AI assistant",                  href: "/",           icon: <IChat />,    keywords: "ask question query" },
   { label: "Documents",               desc: "Browse your document library",           href: "/documents",  icon: <IDocs />,    keywords: "files pdf library" },
   { label: "Document Performance",    desc: "Analytics and relevance metrics",        href: "/documents?tab=performance", icon: <IChart />,   keywords: "analytics metrics stats" },
@@ -80,11 +94,21 @@ export default function CommandPalette() {
   const [query, setQuery]     = useState("");
   const [selected, setSelected] = useState(0);
   const { user } = useAuth();
+  const { theme, cycle } = useTheme();
+  const { startNew } = useConvos();
   const router = useRouter();
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef  = useRef<HTMLDivElement>(null);
 
   const close = useCallback(() => { setOpen(false); setQuery(""); setSelected(0); }, []);
+
+  // Action commands (defined here so they can use hooks). Listed first.
+  const ACTION_COMMANDS: Command[] = [
+    { label: "New chat", desc: "Start a fresh conversation", icon: <INew />, keywords: "new clear reset conversation",
+      action: () => { startNew(); router.push("/"); } },
+    { label: `Toggle theme — currently ${theme}`, desc: "Switch light · dark · system", icon: <ITheme />, keywords: "theme dark light mode appearance color",
+      action: () => cycle(), keepOpen: true },
+  ];
 
   // Global keyboard listener
   useEffect(() => {
@@ -96,7 +120,6 @@ export default function CommandPalette() {
     return () => window.removeEventListener("keydown", handler);
   }, [close]);
 
-  // Auto-focus input
   useEffect(() => {
     if (open) {
       const t = setTimeout(() => inputRef.current?.focus(), 40);
@@ -104,28 +127,26 @@ export default function CommandPalette() {
     }
   }, [open]);
 
-  const commands = COMMANDS.filter(c => {
+  const commands = [...ACTION_COMMANDS, ...NAV_COMMANDS].filter(c => {
     if (c.adminOnly && user?.role !== "admin") return false;
     if (!query.trim()) return true;
     const q = query.toLowerCase();
     return c.label.toLowerCase().includes(q) || c.desc.toLowerCase().includes(q) || (c.keywords ?? "").includes(q);
   });
 
-  // Keep selected in bounds
   useEffect(() => { setSelected(0); }, [query]);
 
-  const navigate = (cmd: Command) => {
-    router.push(cmd.href);
-    close();
-  };
+  const run = useCallback((cmd: Command) => {
+    if (cmd.action) { cmd.action(); if (!cmd.keepOpen) close(); }
+    else if (cmd.href) { router.push(cmd.href); close(); }
+  }, [router, close]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "ArrowDown") { e.preventDefault(); setSelected(s => Math.min(s + 1, commands.length - 1)); }
     if (e.key === "ArrowUp")   { e.preventDefault(); setSelected(s => Math.max(s - 1, 0)); }
-    if (e.key === "Enter" && commands[selected]) navigate(commands[selected]);
+    if (e.key === "Enter" && commands[selected]) run(commands[selected]);
   };
 
-  // Scroll selected item into view
   useEffect(() => {
     const el = listRef.current?.querySelector(`[data-idx="${selected}"]`) as HTMLElement | null;
     el?.scrollIntoView({ block: "nearest" });
@@ -135,10 +156,8 @@ export default function CommandPalette() {
 
   return (
     <>
-      {/* Backdrop */}
       <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[150]" onClick={close} />
 
-      {/* Palette */}
       <div className="fixed top-[18%] left-1/2 -translate-x-1/2 w-full max-w-lg z-[160]"
         style={{ animation: "paletteIn 0.15s ease-out" }}>
         <style>{`
@@ -148,10 +167,10 @@ export default function CommandPalette() {
           }
         `}</style>
 
-        <div className="bg-white rounded-2xl shadow-2xl border border-gray-200 overflow-hidden">
+        <div className="bg-white dark:bg-slate-900 rounded-2xl shadow-2xl border border-gray-200 dark:border-slate-700 overflow-hidden">
           {/* Search input */}
-          <div className="flex items-center gap-3 px-4 py-3.5 border-b border-gray-100">
-            <svg className="w-4 h-4 text-gray-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+          <div className="flex items-center gap-3 px-4 py-3.5 border-b border-gray-100 dark:border-slate-800">
+            <svg className="w-4 h-4 text-gray-400 dark:text-slate-500 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
               <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
             </svg>
             <input
@@ -160,39 +179,39 @@ export default function CommandPalette() {
               onChange={e => setQuery(e.target.value)}
               onKeyDown={handleKeyDown}
               placeholder="Search pages and actions…"
-              className="flex-1 text-sm text-gray-900 placeholder-gray-400 outline-none bg-transparent"
+              className="flex-1 text-sm text-gray-900 dark:text-slate-100 placeholder-gray-400 dark:placeholder-slate-500 outline-none bg-transparent"
             />
-            <kbd className="text-[10px] text-gray-400 bg-gray-100 px-1.5 py-0.5 rounded font-mono border border-gray-200">Esc</kbd>
+            <kbd className="text-[10px] text-gray-400 dark:text-slate-500 bg-gray-100 dark:bg-slate-800 px-1.5 py-0.5 rounded font-mono border border-gray-200 dark:border-slate-700">Esc</kbd>
           </div>
 
           {/* Results */}
           <div ref={listRef} className="max-h-72 overflow-y-auto py-1.5">
             {commands.length === 0 ? (
-              <div className="text-center py-10 text-sm text-gray-400">No results for "<span className="text-gray-600">{query}</span>"</div>
+              <div className="text-center py-10 text-sm text-gray-400 dark:text-slate-500">No results for "<span className="text-gray-600 dark:text-slate-300">{query}</span>"</div>
             ) : (
               commands.map((cmd, i) => (
                 <button
                   key={cmd.label}
                   data-idx={i}
-                  onClick={() => navigate(cmd)}
+                  onClick={() => run(cmd)}
                   onMouseEnter={() => setSelected(i)}
                   className={`w-full text-left flex items-center gap-3 px-4 py-2.5 transition-colors ${
-                    selected === i ? "bg-red-50" : "hover:bg-gray-50"
+                    selected === i ? "bg-red-50 dark:bg-red-500/10" : "hover:bg-gray-50 dark:hover:bg-slate-800"
                   }`}
                 >
                   <div className={`w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0 transition-colors ${
-                    selected === i ? "bg-red-100 text-red-600" : "bg-gray-100 text-gray-500"
+                    selected === i ? "bg-red-100 dark:bg-red-500/20 text-red-600 dark:text-red-400" : "bg-gray-100 dark:bg-slate-800 text-gray-500 dark:text-slate-400"
                   }`}>
                     {cmd.icon}
                   </div>
                   <div className="flex-1 min-w-0">
-                    <div className={`text-sm font-medium transition-colors ${selected === i ? "text-red-700" : "text-gray-800"}`}>
+                    <div className={`text-sm font-medium transition-colors ${selected === i ? "text-red-700 dark:text-red-400" : "text-gray-800 dark:text-slate-200"}`}>
                       {cmd.label}
                     </div>
-                    <div className="text-xs text-gray-400 truncate">{cmd.desc}</div>
+                    <div className="text-xs text-gray-400 dark:text-slate-500 truncate">{cmd.desc}</div>
                   </div>
                   {selected === i && (
-                    <kbd className="text-[10px] text-gray-400 bg-gray-100 px-1.5 py-0.5 rounded font-mono border border-gray-200 flex-shrink-0">↵</kbd>
+                    <kbd className="text-[10px] text-gray-400 dark:text-slate-500 bg-gray-100 dark:bg-slate-800 px-1.5 py-0.5 rounded font-mono border border-gray-200 dark:border-slate-700 flex-shrink-0">↵</kbd>
                   )}
                 </button>
               ))
@@ -200,12 +219,12 @@ export default function CommandPalette() {
           </div>
 
           {/* Footer hint */}
-          <div className="flex items-center justify-between px-4 py-2.5 border-t border-gray-100 bg-gray-50">
-            <div className="flex items-center gap-3 text-[11px] text-gray-400">
-              <span className="flex items-center gap-1"><kbd className="bg-white border border-gray-200 rounded px-1 font-mono">↑</kbd><kbd className="bg-white border border-gray-200 rounded px-1 font-mono">↓</kbd> Navigate</span>
-              <span><kbd className="bg-white border border-gray-200 rounded px-1 font-mono">↵</kbd> Open</span>
+          <div className="flex items-center justify-between px-4 py-2.5 border-t border-gray-100 dark:border-slate-800 bg-gray-50 dark:bg-slate-950/40">
+            <div className="flex items-center gap-3 text-[11px] text-gray-400 dark:text-slate-500">
+              <span className="flex items-center gap-1"><kbd className="bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded px-1 font-mono">↑</kbd><kbd className="bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded px-1 font-mono">↓</kbd> Navigate</span>
+              <span><kbd className="bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded px-1 font-mono">↵</kbd> Open</span>
             </div>
-            <span className="text-[11px] text-gray-400">{commands.length} result{commands.length !== 1 ? "s" : ""}</span>
+            <span className="text-[11px] text-gray-400 dark:text-slate-500">{commands.length} result{commands.length !== 1 ? "s" : ""}</span>
           </div>
         </div>
       </div>

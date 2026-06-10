@@ -47,9 +47,9 @@ function Toggle({ on, onChange }: { on: boolean; onChange: () => void }) {
 
 function SectionCard({ title, subtitle, children }: { title: string; subtitle?: string; children: React.ReactNode }) {
   return (
-    <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
-      <div className="px-6 py-5 border-b border-gray-100">
-        <h2 className="text-sm font-semibold text-gray-900">{title}</h2>
+    <div className="bg-white dark:bg-slate-900 rounded-2xl border border-gray-200 dark:border-slate-700 shadow-sm overflow-hidden">
+      <div className="px-6 py-5 border-b border-gray-100 dark:border-slate-800">
+        <h2 className="text-sm font-semibold text-gray-900 dark:text-slate-100">{title}</h2>
         {subtitle && <p className="text-xs text-gray-400 mt-0.5">{subtitle}</p>}
       </div>
       <div className="px-6 py-5">{children}</div>
@@ -118,7 +118,7 @@ function ProfileTab() {
   const roleBadge: Record<string, string> = {
     admin: "bg-red-100 text-red-700",
     analyst: "bg-blue-100 text-blue-700",
-    viewer: "bg-gray-100 text-gray-600",
+    viewer: "bg-gray-100 dark:bg-slate-800 text-gray-600 dark:text-slate-400",
   };
 
   return (
@@ -180,14 +180,14 @@ function ProfileTab() {
                 placeholder={f.placeholder} disabled={f.disabled}
                 className={`w-full border rounded-xl px-3.5 py-2.5 text-sm transition-all focus:outline-none ${
                   f.disabled
-                    ? "border-gray-100 bg-gray-50 text-gray-400 cursor-not-allowed"
-                    : "border-gray-200 bg-white text-gray-900 placeholder-gray-400 focus:ring-2 focus:ring-red-500 focus:border-transparent"
+                    ? "border-gray-100 dark:border-slate-800 bg-gray-50 dark:bg-slate-800 text-gray-400 cursor-not-allowed"
+                    : "border-gray-200 dark:border-slate-700 bg-white text-gray-900 dark:text-slate-100 placeholder-gray-400 focus:ring-2 focus:ring-red-500 focus:border-transparent"
                 }`} />
               {f.disabled && <p className="text-[11px] text-gray-400 mt-1">Contact your admin to change email</p>}
             </div>
           ))}
         </div>
-        <div className="flex items-center gap-3 mt-5 pt-5 border-t border-gray-100">
+        <div className="flex items-center gap-3 mt-5 pt-5 border-t border-gray-100 dark:border-slate-800">
           <button onClick={save}
             className="bg-red-600 hover:bg-red-700 text-white text-sm font-semibold px-5 py-2.5 rounded-xl transition-colors shadow-sm">
             Save changes
@@ -205,7 +205,7 @@ function ProfileTab() {
             },
             {
               label: "Member since",
-              value: <span className="text-sm font-medium text-gray-800">{(() => {
+              value: <span className="text-sm font-medium text-gray-800 dark:text-slate-200">{(() => {
                 const raw = user?.id ? localStorage.getItem("synaptdi_joined_" + user.id) : null;
                 if (!raw) return "—";
                 return new Date(raw).toLocaleDateString("en-US", { month: "long", year: "numeric" });
@@ -213,7 +213,7 @@ function ProfileTab() {
             },
             {
               label: "Last sign-in",
-              value: <span className="text-sm text-gray-500">{(() => {
+              value: <span className="text-sm text-gray-500 dark:text-slate-400">{(() => {
                 const raw = localStorage.getItem("synaptdi_last_login");
                 if (!raw) return "—";
                 const d = new Date(raw);
@@ -229,7 +229,7 @@ function ProfileTab() {
             },
           ].map(row => (
             <div key={row.label} className="flex items-center justify-between py-3">
-              <span className="text-sm text-gray-500">{row.label}</span>
+              <span className="text-sm text-gray-500 dark:text-slate-400">{row.label}</span>
               {row.value}
             </div>
           ))}
@@ -319,7 +319,7 @@ function SecurityTab() {
             <div key={f.label}>
               <label className="block text-[11px] font-bold text-gray-400 uppercase tracking-widest mb-1.5">{f.label}</label>
               <input type="password" value={f.val} onChange={e => f.set(e.target.value)} placeholder={f.ph}
-                className="w-full border border-gray-200 rounded-xl px-3.5 py-2.5 text-sm text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-red-500 focus:border-transparent transition-all" />
+                className="w-full border border-gray-200 dark:border-slate-700 rounded-xl px-3.5 py-2.5 text-sm text-gray-900 dark:text-slate-100 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-red-500 focus:border-transparent transition-all" />
             </div>
           ))}
           <div className="pt-1">
@@ -334,7 +334,7 @@ function SecurityTab() {
       <SectionCard title="Two-Factor Authentication" subtitle="Require a verification code in addition to your password.">
         <div className="flex items-center justify-between">
           <div>
-            <p className="text-sm font-medium text-gray-800">Authenticator app</p>
+            <p className="text-sm font-medium text-gray-800 dark:text-slate-200">Authenticator app</p>
             <p className="text-xs text-gray-400 mt-0.5">{twoFA ? "2FA is enabled on your account" : "Add an extra layer of security"}</p>
           </div>
           <Toggle on={twoFA} onChange={() => setTwoFA(v => !v)} />
@@ -352,7 +352,7 @@ function SecurityTab() {
           {sessions.filter(s => !revoked.includes(s.id)).map(s => (
             <div key={s.id} className="flex items-center justify-between py-3.5 first:pt-0 last:pb-0">
               <div className="flex items-start gap-3 min-w-0">
-                <div className={`mt-0.5 w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 ${s.current ? "bg-green-100" : "bg-gray-100"}`}>
+                <div className={`mt-0.5 w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 ${s.current ? "bg-green-100" : "bg-gray-100 dark:bg-slate-800"}`}>
                   <svg className={`w-4 h-4 ${s.current ? "text-green-600" : "text-gray-400"}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
                     <rect x="2" y="3" width="20" height="14" rx="2" ry="2"/>
                     <line x1="8" y1="21" x2="16" y2="21"/>
@@ -361,7 +361,7 @@ function SecurityTab() {
                 </div>
                 <div className="min-w-0">
                   <div className="flex items-center gap-2 flex-wrap">
-                    <span className="text-sm font-medium text-gray-800">{s.device}</span>
+                    <span className="text-sm font-medium text-gray-800 dark:text-slate-200">{s.device}</span>
                     {s.current && <span className="text-[11px] bg-green-100 text-green-700 px-2 py-0.5 rounded-full font-semibold">Active</span>}
                   </div>
                   <p className="text-xs text-gray-400 mt-0.5">{s.location} · {s.time}</p>
@@ -410,18 +410,18 @@ function PreferencesTab() {
         <div className="space-y-5">
           <div className="flex items-center justify-between gap-4">
             <div>
-              <p className="text-sm font-medium text-gray-800">Show source previews</p>
+              <p className="text-sm font-medium text-gray-800 dark:text-slate-200">Show source previews</p>
               <p className="text-xs text-gray-400 mt-0.5">Display retrieved document chunks alongside each answer</p>
             </div>
             <Toggle on={showSrc} onChange={() => setShowSrc(v => !v)} />
           </div>
-          <div className="flex items-center justify-between gap-4 pt-4 border-t border-gray-100">
+          <div className="flex items-center justify-between gap-4 pt-4 border-t border-gray-100 dark:border-slate-800">
             <div>
-              <p className="text-sm font-medium text-gray-800">Results per query</p>
+              <p className="text-sm font-medium text-gray-800 dark:text-slate-200">Results per query</p>
               <p className="text-xs text-gray-400 mt-0.5">Number of document chunks to retrieve for each question</p>
             </div>
             <select value={topK} onChange={e => setTopK(e.target.value)}
-              className="border border-gray-200 rounded-lg px-3 py-1.5 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-red-500 bg-white min-w-[110px]">
+              className="border border-gray-200 dark:border-slate-700 rounded-lg px-3 py-1.5 text-sm text-gray-700 dark:text-slate-300 focus:outline-none focus:ring-2 focus:ring-red-500 bg-white min-w-[110px]">
               <option value="3">3 chunks</option>
               <option value="5">5 chunks</option>
               <option value="10">10 chunks</option>
@@ -437,9 +437,9 @@ function PreferencesTab() {
             { label: "System alerts",     desc: "In-app notifications for errors and status changes", val: sysAl,  set: setSysAl },
             { label: "Index updates",     desc: "Alert when new documents are added to the index",    val: indexN, set: setIndexN },
           ].map((n, i) => (
-            <div key={n.label} className={`flex items-center justify-between gap-4 ${i > 0 ? "pt-5 border-t border-gray-100" : ""}`}>
+            <div key={n.label} className={`flex items-center justify-between gap-4 ${i > 0 ? "pt-5 border-t border-gray-100 dark:border-slate-800" : ""}`}>
               <div>
-                <p className="text-sm font-medium text-gray-800">{n.label}</p>
+                <p className="text-sm font-medium text-gray-800 dark:text-slate-200">{n.label}</p>
                 <p className="text-xs text-gray-400 mt-0.5">{n.desc}</p>
               </div>
               <Toggle on={n.val} onChange={() => n.set(v => !v)} />
@@ -473,19 +473,19 @@ export default function SettingsPage() {
     <AppShell>
       <div className="flex flex-col h-full">
         {/* Header */}
-        <header className="flex items-center justify-between px-6 py-4 bg-white border-b border-gray-200 flex-shrink-0">
+        <header className="flex items-center justify-between px-6 py-4 bg-white dark:bg-slate-900 border-b border-gray-200 dark:border-slate-700 flex-shrink-0">
           <div>
-            <h1 className="text-base font-semibold text-gray-900">Settings</h1>
+            <h1 className="text-base font-semibold text-gray-900 dark:text-slate-100">Settings</h1>
             <p className="text-xs text-gray-400 mt-0.5">Manage your account and preferences</p>
           </div>
         </header>
 
         {/* Tab bar — consistent underline style */}
-        <div className="flex border-b border-gray-200 bg-white px-6 flex-shrink-0">
+        <div className="flex border-b border-gray-200 dark:border-slate-700 bg-white px-6 flex-shrink-0">
           {tabs.map(t => (
             <button key={t.id} onClick={() => setTab(t.id)}
               className={`px-5 py-3.5 text-sm font-medium border-b-2 transition-all -mb-px ${
-                tab === t.id ? "border-red-600 text-red-600" : "border-transparent text-gray-500 hover:text-gray-800"
+                tab === t.id ? "border-red-600 text-red-600" : "border-transparent text-gray-500 dark:text-slate-400 hover:text-gray-800 dark:text-slate-200"
               }`}>
               {t.label}
             </button>
@@ -493,7 +493,7 @@ export default function SettingsPage() {
         </div>
 
         {/* Body */}
-        <div className="flex-1 overflow-y-auto bg-gray-50">
+        <div className="flex-1 overflow-y-auto bg-gray-50 dark:bg-slate-800">
           <div className="max-w-2xl mx-auto px-6 py-8">
             {tab === "profile"     && <ProfileTab />}
             {tab === "security"    && <SecurityTab />}
