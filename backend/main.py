@@ -28,6 +28,7 @@ from pydantic import BaseModel
 import chromadb
 import ingest   # reuse the ingestion parsers: parse_openapi_spec, parse_markdown, chunk_text, embed_batch, …
 import conformance   # TMF630 conformance rule engine
+from vectorstore import get_store, reset_store   # backend-agnostic vector store (Chroma today)
 
 _chroma_lock = threading.Lock()   # protects singleton + upsert/query overlap
 
@@ -207,21 +208,14 @@ def startup_init():
     # open, so the very first query already sees the full corpus (verified).
     print("[startup] SynaptDI ready — ChromaDB opens on first request", flush=True)
 
-# ── ChromaDB singleton ─────────────────────────────────────────────────────────
-_chroma_client     = None
-_chroma_collection = None
-
+# ── Vector store ─────────────────────────────────────────────────────────────────
 # Pre-built mapping of "TMF622" → "TMF622-ProductOrdering-v4.0.0.swagger.json"
 # populated at startup so the query path never needs to scan all metadatas.
 
 def get_collection():
-    """Return the ChromaDB collection singleton (thread-safe, lazily opened)."""
-    global _chroma_client, _chroma_collection
-    with _chroma_lock:
-        if _chroma_collection is None:
-            _chroma_client     = chromadb.PersistentClient(path=CHROMA_PATH)
-            _chroma_collection = _chroma_client.get_collection("axiom_v1")
-        return _chroma_collection
+    """Return the vector store — a thin, backend-agnostic interface (ChromaDB today,
+    swappable to Milvus/Qdrant/pgvector via VECTOR_BACKEND without touching call sites)."""
+    return get_store()
 
 # ── Spec-ID awareness ────────────────────────────────────────────────────────
 # Engineers name a spec directly ("mandatory fields in TMF641?"). nomic-embed-text
@@ -260,7 +254,7 @@ def get_spec_map(col) -> dict:
             if _spec_map is None:
                 sm:    dict[str, set] = {}
                 names: dict[str, str] = {}
-                try:    metas = col.get(include=["metadatas"])["metadatas"]
+                try:    metas = [r["metadata"] for r in col.scan()]
                 except Exception: metas = []
                 for m in metas:
                     sid = m.get("spec_id") or ""
@@ -838,14 +832,11 @@ def retrieve(question: str, q_emb: list, top_k: int, scope: str):
     if scope == "docs":
         # Answer ONLY from the user's uploaded documents.
         if added:
-            res = col.query(query_embeddings=[q_emb], n_results=min(top_k * 2, total),
-                            where={"origin": {"$in": added}},
-                            include=["documents", "metadatas", "distances"])
-            for d, m, dist in zip(res["documents"][0], res["metadatas"][0], res["distances"][0]):
+            for h in col.query(q_emb, min(top_k * 2, total), where_in=("origin", added)):
                 if len(chunks) >= top_k:
                     break
-                if dist < DOC_SCOPE_MAX:
-                    add(d, m, dist, upload=True)
+                if h["distance"] < DOC_SCOPE_MAX:
+                    add(h["document"], h["metadata"], h["distance"], upload=True)
     else:
         # 1. Spec-targeted retrieval — guarantee named specs are present.
         spec_map = get_spec_map(col)
@@ -855,12 +846,9 @@ def retrieve(question: str, q_emb: list, top_k: int, scope: str):
             per_spec = max(top_k // len(matched), 2)
             for sid in matched:
                 sfiles = sorted(spec_map[sid])
-                res = col.query(query_embeddings=[q_emb], n_results=min(per_spec * 4, total),
-                                where={"file": {"$in": sfiles}},
-                                include=["documents", "metadatas", "distances"])
-                cands = [(_rank_adjust(focus, d, dist), d, m, dist)
-                         for d, m, dist in zip(res["documents"][0], res["metadatas"][0], res["distances"][0])
-                         if dist < KB_DIST_MAX]
+                hits = col.query(q_emb, min(per_spec * 4, total), where_in=("file", sfiles))
+                cands = [(_rank_adjust(focus, h["document"], h["distance"]), h["document"], h["metadata"], h["distance"])
+                         for h in hits if h["distance"] < KB_DIST_MAX]
                 cands.sort(key=lambda x: x[0])           # schema-aware re-rank within the named spec
                 n = per_spec
                 for eff, d, m, dist in cands:
@@ -872,20 +860,17 @@ def retrieve(question: str, q_emb: list, top_k: int, scope: str):
         # 2. Merge uploaded docs (boosted) + general KB by effective distance.
         pool: list = []
         if scope == "all" and added:
-            res = col.query(query_embeddings=[q_emb], n_results=min(top_k * 2, total),
-                            where={"origin": {"$in": added}},
-                            include=["documents", "metadatas", "distances"])
-            for d, m, dist in zip(res["documents"][0], res["metadatas"][0], res["distances"][0]):
-                if dist < UPLOAD_MAX_DIST:
-                    pool.append({"d": d, "m": m, "dist": dist, "upload": True,
-                                 "eff": max(0.0, _rank_adjust(focus, d, dist) - UPLOAD_BOOST)})
-        res = col.query(query_embeddings=[q_emb], n_results=min(top_k * 3, total),
-                        include=["documents", "metadatas", "distances"])
-        for d, m, dist in zip(res["documents"][0], res["metadatas"][0], res["distances"][0]):
+            for h in col.query(q_emb, min(top_k * 2, total), where_in=("origin", added)):
+                if h["distance"] < UPLOAD_MAX_DIST:
+                    pool.append({"d": h["document"], "m": h["metadata"], "dist": h["distance"], "upload": True,
+                                 "eff": max(0.0, _rank_adjust(focus, h["document"], h["distance"]) - UPLOAD_BOOST)})
+        for h in col.query(q_emb, min(top_k * 3, total)):
+            m = h["metadata"]
             if m.get("origin", "") in added_set:        # user-added sources handled separately above
                 continue
-            if dist < KB_DIST_MAX:
-                pool.append({"d": d, "m": m, "dist": dist, "upload": False, "eff": _rank_adjust(focus, d, dist)})
+            if h["distance"] < KB_DIST_MAX:
+                pool.append({"d": h["document"], "m": m, "dist": h["distance"], "upload": False,
+                             "eff": _rank_adjust(focus, h["document"], h["distance"])})
         pool.sort(key=lambda c: c["eff"])
         for c in pool:
             if len(chunks) >= top_k:
@@ -1111,11 +1096,11 @@ def documents_library():
                         file_to_folder[f.name] = folder.name
 
     # Get chunk counts per file from ChromaDB (metadata segment, always accurate)
-    col   = get_collection()
-    items = col.get(include=["metadatas"])
+    col     = get_collection()
+    records = col.scan()
 
     file_stats: dict[str, dict] = {}
-    for meta in items["metadatas"]:
+    for meta in (r["metadata"] for r in records):
         fname = meta.get("file", "")
         if not fname or fname in upload_files or meta.get("origin"):
             continue                            # skip user-added sources (files/repos/web)
@@ -1224,10 +1209,9 @@ def document_status(file_name: str):
 @app.delete("/documents/{file_name}")
 def delete_document(file_name: str):
     col       = get_collection()
-    all_items = col.get(include=["metadatas"])
     to_delete = [
-        iid for iid, meta in zip(all_items["ids"], all_items["metadatas"])
-        if meta.get("origin") == file_name or meta.get("file") == file_name
+        r["id"] for r in col.scan()
+        if r["metadata"].get("origin") == file_name or r["metadata"].get("file") == file_name
     ]
     if to_delete:
         col.delete(ids=to_delete)
@@ -1500,13 +1484,13 @@ def refresh_kb(_admin: dict = Depends(require_admin)):
     if PROCESSING_STATUS.get("__kb_refresh__", {}).get("status") == "processing":
         return {"status": "processing"}
     def _run():
-        global _chroma_client, _chroma_collection, _spec_map, _spec_names
+        global _spec_map, _spec_names
         PROCESSING_STATUS["__kb_refresh__"] = {"status": "processing", "chunks": 0}
         try:
             url_map = ingest.download_data()
             n = ingest.build_index(url_map)
             with _chroma_lock:                 # force re-open of the rebuilt collection
-                _chroma_client = None; _chroma_collection = None
+                reset_store()
                 _spec_map = None; _spec_names = []
             PROCESSING_STATUS["__kb_refresh__"] = {"status": "indexed", "chunks": n}
         except Exception as e:

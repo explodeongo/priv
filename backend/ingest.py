@@ -336,7 +336,8 @@ def download_data():
 def build_index(repo_url_map):
     print("\n[2/3] Building ChromaDB index...")
 
-    client = chromadb.PersistentClient(path=CHROMA_PATH)
+    from vectorstore import ChromaVectorStore
+    store = ChromaVectorStore()              # same backend-agnostic layer the server uses
 
     # ── Snapshot user-uploaded chunks so we can re-add them after rebuild ──
     uploads_file = Path("./storage/uploads.json")
@@ -345,27 +346,16 @@ def build_index(repo_url_map):
         try:
             upload_files = {u["file"] for u in json.loads(uploads_file.read_text())}
             if upload_files:
-                old_col = client.get_collection("axiom_v1")
-                items   = old_col.get(include=["documents","metadatas","embeddings"])
-                for iid, doc, meta, emb in zip(
-                        items["ids"], items["documents"],
-                        items["metadatas"], items["embeddings"]):
-                    if meta.get("file","") in upload_files:
-                        upload_snapshot[iid] = (doc, meta, emb)
+                for r in store.scan(with_documents=True, with_embeddings=True):
+                    if r["metadata"].get("file", "") in upload_files:
+                        upload_snapshot[r["id"]] = (r["document"], r["metadata"], r["embedding"])
                 print(f"  Preserved {len(upload_snapshot)} uploaded chunks for re-add")
         except Exception:
             pass   # no existing collection or no uploads — that's fine
 
-    # Drop and recreate for a clean spec build
-    try:
-        client.delete_collection("axiom_v1")
-    except Exception:
-        pass
-
-    collection = client.create_collection(
-        name="axiom_v1",
-        metadata={"hnsw:space": "cosine"}
-    )
+    # Drop and recreate for a clean spec build (through the vector-store layer)
+    store.recreate()
+    collection = store
 
     data_dir = Path(DATA_PATH)
     docs_processed = 0
@@ -406,8 +396,8 @@ def build_index(repo_url_map):
             ids2.append(_id);  docs2.append(_doc)
             metas2.append(_meta);  embs2.append(_emb)
         if ids2:
-            collection.add(ids=ids2, documents=docs2,
-                           metadatas=metas2, embeddings=embs2)
+            collection.upsert(ids=ids2, documents=docs2,
+                              metadatas=metas2, embeddings=embs2)
             chunks_added += len(ids2)
         pend_ids.clear(); pend_docs.clear(); pend_metas.clear()
 
@@ -471,7 +461,7 @@ def build_index(repo_url_map):
             ids.append(iid); docs.append(doc)
             metas.append(meta); embs.append(list(emb) if hasattr(emb, 'tolist') else emb)
         for i in range(0, len(ids), 50):
-            collection.add(
+            collection.upsert(
                 ids=ids[i:i+50], documents=docs[i:i+50],
                 metadatas=metas[i:i+50], embeddings=embs[i:i+50]
             )
