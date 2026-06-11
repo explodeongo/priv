@@ -109,7 +109,7 @@ function renderMarkdown(text: string, sources: Source[] = [], onCite?: (n: numbe
     } else if (line.match(/^[\*\-\+]\s/)) {
       nodes.push(
         <div key={key++} className="flex gap-2 my-0.5 ml-1">
-          <span className="text-red-500 flex-shrink-0 mt-0.5">•</span>
+          <span className="text-gray-400 dark:text-slate-500 flex-shrink-0 mt-0.5">•</span>
           <span>{inlineFormat(line.slice(2), sources, onCite)}</span>
         </div>
       );
@@ -564,22 +564,22 @@ export default function Home() {
                     {msg.role === "assistant" && !msg.error
                       ? (msg.content
                           ? renderMarkdown(msg.content, msg.sources || [], (n) => { const s = (msg.sources || [])[n - 1]; if (s) setActiveSource(s); })
-                          : (trace && (trace.specs.length > 0 || trace.sources.length > 0)
-                              ? <span className="flex items-center gap-2 py-0.5 text-gray-500 dark:text-slate-400">
-                                  <span className="flex gap-1">
-                                    {[0, 150, 300].map(d => (
-                                      <span key={d} className="w-1.5 h-1.5 rounded-full bg-red-400 animate-bounce" style={{ animationDelay: `${d}ms` }} />
-                                    ))}
-                                  </span>
-                                  <span className="text-xs">
-                                    Searching {(trace.specs.length ? trace.specs : trace.sources).slice(0, 4).map(stripMd).join(", ")}{(trace.specs.length ? trace.specs : trace.sources).length > 4 ? "…" : ""}
-                                  </span>
-                                </span>
-                              : <span className="flex items-center gap-1.5 py-0.5">
-                                  {[0, 150, 300].map(d => (
-                                    <span key={d} className="w-2 h-2 rounded-full bg-red-400 animate-bounce" style={{ animationDelay: `${d}ms` }} />
-                                  ))}
-                                </span>))
+                          : (
+                            <div className="space-y-2.5 py-0.5 min-w-[240px]">
+                              {trace && (trace.specs.length > 0 || trace.sources.length > 0) && (
+                                <div className="flex items-center gap-2 text-xs text-gray-500 dark:text-slate-400 mb-1">
+                                  <svg className="w-3.5 h-3.5 animate-spin text-red-500" viewBox="0 0 24 24" fill="none">
+                                    <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="3" strokeOpacity="0.25" />
+                                    <path d="M21 12a9 9 0 0 0-9-9" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
+                                  </svg>
+                                  <span>Searching {(trace.specs.length ? trace.specs : trace.sources).slice(0, 4).map(stripMd).join(", ")}{(trace.specs.length ? trace.specs : trace.sources).length > 4 ? "…" : ""}</span>
+                                </div>
+                              )}
+                              <div className="skeleton h-3 w-[92%]" />
+                              <div className="skeleton h-3 w-[78%]" />
+                              <div className="skeleton h-3 w-[55%]" />
+                            </div>
+                          ))
                       : <span>{msg.content}</span>}
                   </div>
 
