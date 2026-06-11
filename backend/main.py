@@ -27,6 +27,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import chromadb
 import ingest   # reuse the ingestion parsers: parse_openapi_spec, parse_markdown, chunk_text, embed_batch, …
+import conformance   # TMF630 conformance rule engine
 
 _chroma_lock = threading.Lock()   # protects singleton + upsert/query overlap
 
@@ -732,6 +733,22 @@ def stats():
     col = get_collection()
     return {"chunks_indexed": col.count(), "collection": "axiom_v1"}
 
+@app.get("/coverage")
+def coverage():
+    """What the knowledge base actually covers — specs grouped by domain (for onboarding)."""
+    col = get_collection()
+    try:
+        smap = get_spec_map(col)
+    except Exception:
+        smap = {}
+    groups: dict = {}
+    for sid, files in smap.items():
+        f0 = sorted(files)[0] if files else ""
+        dom = _kb_category(sid, f0, "")
+        groups.setdefault(dom, set()).add(sid)
+    domains = [{"domain": d, "specs": sorted(groups[d])} for d in sorted(groups)]
+    return {"chunks": col.count(), "spec_count": len(smap), "domains": domains}
+
 # ── Query ──────────────────────────────────────────────────────────────────────
 # Schema-aware re-ranking. nomic-embed distances alone can rank an unrelated schema
 # that literally says "required: [id, callback]" (e.g. EventSubscription) above the
@@ -746,6 +763,7 @@ _FOCUS_STOP   = {"what","whats","which","whose","does","do","did","the","a","an"
                  "needs","needed","have","has","with","please","give","when","creating","create"}
 _GENERIC_SCHEMAS = ("eventsubscription","hub","event","notification","error","extensibleerror","meta",
                     "entityref","timeperiod","money","quantity","note","characteristic","attachmentref")
+LEX_WEIGHT = 0.12   # hybrid re-rank: how much a full keyword match can pull a chunk up
 
 def _schema_name(doc: str) -> str:
     m = _SCHEMA_RE.search(doc or "")
@@ -753,33 +771,44 @@ def _schema_name(doc: str) -> str:
 
 def _resource_focus(question: str) -> dict:
     """Pull the resource the user is asking about out of the question, e.g.
-    'mandatory fields of TMF622 Product Order' -> target 'productorder'."""
+    'mandatory fields of TMF622 Product Order' -> target 'productorder', plus the
+    set of content keywords used for the lexical half of the hybrid re-rank."""
     cleaned = re.sub(r"\bTMF\s?\d{3,4}\b", " ", question or "", flags=re.I)
     words   = re.findall(r"[A-Za-z][A-Za-z0-9]*", cleaned)
     keep    = [w for w in words if w.lower() not in _FOCUS_STOP and len(w) > 1]
-    return {"target": "".join(keep).lower(), "is_field": bool(_FIELD_INTENT.search(question or ""))}
+    terms   = sorted({w.lower() for w in words if len(w) > 2 and w.lower() not in _FOCUS_STOP})
+    return {"target": "".join(keep).lower(),
+            "is_field": bool(_FIELD_INTENT.search(question or "")),
+            "terms": terms}
 
 def _rank_adjust(focus: dict, doc: str, dist: float) -> float:
-    """Effective distance (lower = better): boost chunks whose schema name matches the
-    named resource; penalise unrelated generic schemas on a field-list question."""
+    """Hybrid re-rank → effective distance (lower = better). Blends the dense embedding
+    distance with two sparse signals: (a) a schema-name match to the named resource
+    (preferring its _Create variant for 'fields' questions, demoting *Ref/*_Update and
+    unrelated generic schemas), and (b) lexical overlap with the question's keywords."""
+    eff = dist
     target = focus.get("target") or ""
-    if not target:
-        return dist
-    sn = _schema_name(doc).lower().replace("_", "")
-    if not sn:
-        return dist
-    is_field = focus.get("is_field")
-    if is_field and any(sn == g or sn.startswith(g) for g in _GENERIC_SCHEMAS):
-        return dist + 0.25                        # unrelated notification/error schema on a fields question
-    if is_field and target in sn and (sn.endswith("ref") or sn.endswith("update")):
-        return dist + 0.15                        # *Ref / *_Update aren't where required-to-create lives
-    if sn == target + "create":
-        return dist - 0.22                        # the _Create / FVO variant — exactly what you must submit
-    if sn == target:
-        return dist - 0.16                        # the main resource schema
-    if target in sn or sn in target:
-        return dist - 0.10                        # related schema (e.g. ProductOrderItem)
-    return dist
+    sn = _schema_name(doc).lower().replace("_", "") if target else ""
+    if target and sn:
+        is_field = focus.get("is_field")
+        if is_field and any(sn == g or sn.startswith(g) for g in _GENERIC_SCHEMAS):
+            eff += 0.25                           # unrelated notification/error schema on a fields question
+        elif is_field and target in sn and (sn.endswith("ref") or sn.endswith("update")):
+            eff += 0.15                           # *Ref / *_Update aren't where required-to-create lives
+        elif sn == target + "create":
+            eff -= 0.22                           # the _Create / FVO variant — exactly what you must submit
+        elif sn == target:
+            eff -= 0.16                           # the main resource schema
+        elif target in sn or sn in target:
+            eff -= 0.10                           # related schema (e.g. ProductOrderItem)
+    # Lexical (sparse) signal: reward chunks that literally contain the query's keywords.
+    terms = focus.get("terms") or []
+    if terms:
+        dl = doc.lower()
+        hits = sum(1 for t in terms if t in dl)
+        if hits:
+            eff -= LEX_WEIGHT * (hits / len(terms))
+    return eff
 
 def retrieve(question: str, q_emb: list, top_k: int, scope: str):
     """Shared retrieval for /query and /query/stream.
@@ -1038,6 +1067,29 @@ def generate_followups(question: str, answer: str) -> list:
 @app.post("/followups")
 def followups(req: FollowupReq):
     return {"questions": generate_followups(req.question, req.answer)}
+
+# ── TMF630 conformance checker ───────────────────────────────────────────────────
+@app.post("/conformance")
+async def conformance_check(file: UploadFile = File(...)):
+    """Upload an OpenAPI/Swagger spec → get a TMF630 conformance report (score + findings)."""
+    raw  = await file.read()
+    text = raw.decode("utf-8", errors="ignore")
+    spec = None
+    try:
+        spec = json.loads(text)
+    except Exception:
+        try:
+            import yaml
+            spec = yaml.safe_load(text)
+        except Exception:
+            spec = None
+    if not isinstance(spec, dict):
+        raise HTTPException(400, "Could not parse that file as an OpenAPI/Swagger spec (JSON or YAML).")
+    if not spec.get("paths") and not (spec.get("components") or spec.get("definitions")):
+        raise HTTPException(400, "That doesn't look like an OpenAPI spec — no paths or schemas found.")
+    report = conformance.check_spec(spec)
+    report["filename"] = file.filename
+    return report
 
 # ── Documents ──────────────────────────────────────────────────────────────────
 @app.get("/documents/library")

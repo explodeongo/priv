@@ -5,6 +5,9 @@ import { ToastProvider } from "./components/Toast";
 import { BrandingProvider } from "./components/BrandingContext";
 import { ConversationProvider } from "./components/ConversationContext";
 import { ThemeProvider } from "./components/ThemeContext";
+import { Inter } from "next/font/google";
+
+const inter = Inter({ subsets: ["latin"], variable: "--font-geist-sans", display: "swap" });
 
 // Runs before paint so the correct theme is applied with no flash of the wrong one.
 const themeScript = `(function(){try{var t=localStorage.getItem('synaptdi_theme')||'system';var d=t==='dark'||(t==='system'&&window.matchMedia('(prefers-color-scheme: dark)').matches);if(d)document.documentElement.classList.add('dark');}catch(e){}})();`;
@@ -16,7 +19,7 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" suppressHydrationWarning>
+    <html lang="en" className={inter.variable} suppressHydrationWarning>
       <head>
         <script dangerouslySetInnerHTML={{ __html: themeScript }} />
       </head>

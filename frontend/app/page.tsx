@@ -4,6 +4,7 @@ import AppShell from "./components/AppShell";
 import { useBranding } from "./components/BrandingContext";
 import { useConvos } from "./components/ConversationContext";
 import { loadPrefs } from "./settings/page";
+import { WelcomeModal, CoverageStrip, type Coverage } from "./components/Welcome";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -264,6 +265,8 @@ export default function Home() {
   const [feedbackIdx, setFeedbackIdx] = useState<Record<number, string>>({});
   const [trace, setTrace] = useState<{ specs: string[]; sources: string[] } | null>(null);
   const [followups, setFollowups] = useState<string[]>([]);
+  const [coverage, setCoverage] = useState<Coverage | null>(null);
+  const [showWelcome, setShowWelcome] = useState(false);
   const { activeId, setActiveId, refresh: refreshConvos, loadSignal, consume } = useConvos();
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef  = useRef<HTMLTextAreaElement>(null);
@@ -310,6 +313,8 @@ export default function Home() {
     const p = loadPrefs();
     setPrefs({ topK: p.topK, showSrc: p.showSrc });
     try { const l = localStorage.getItem("synaptdi_logo"); if (l) setLogo(l); } catch {}
+    fetch(`${API}/coverage`).then(r => r.json()).then(setCoverage).catch(() => {});
+    try { if (!localStorage.getItem("synaptdi_welcomed")) setShowWelcome(true); } catch {}
   }, []);
 
   const firstLetter = (branding.companyName || "S")[0].toUpperCase();
@@ -537,6 +542,7 @@ export default function Home() {
                     </button>
                   ))}
                 </div>
+                <CoverageStrip coverage={coverage} />
               </div>
             )}
 
@@ -711,6 +717,13 @@ export default function Home() {
       </div>
 
       {activeSource && <SourceDrawer source={activeSource} onClose={() => setActiveSource(null)} />}
+      {showWelcome && (
+        <WelcomeModal
+          coverage={coverage}
+          onAsk={(q) => { try { localStorage.setItem("synaptdi_welcomed", "1"); } catch {} setShowWelcome(false); ask(q); }}
+          onClose={() => { try { localStorage.setItem("synaptdi_welcomed", "1"); } catch {} setShowWelcome(false); }}
+        />
+      )}
     </AppShell>
   );
 }
