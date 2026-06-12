@@ -211,3 +211,6 @@ Other endpoints: **`GET /health`** (backend + Ollama status), **`GET /stats`** (
 ---
 
 *SynaptDI — a local, citation-grounded RAG assistant for TM Forum Open API standards.*
+
+## Deploy for your team
+One command on a shared server — see **[DEPLOY.md](DEPLOY.md)** (Docker Compose: backend + frontend + Ollama, one URL for everyone).

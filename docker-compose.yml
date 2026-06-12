@@ -1,0 +1,52 @@
+# SynaptDI — one-URL deployment
+# ──────────────────────────────
+#   SERVER_HOST=<this machine's hostname or IP> docker compose up -d --build
+# then (first run only) pull the models and build the index — see DEPLOY.md.
+# Users open:  http://<SERVER_HOST>:3000
+
+services:
+  ollama:
+    image: ollama/ollama:latest
+    volumes:
+      - ollama-models:/root/.ollama
+    restart: unless-stopped
+    # GPU (optional, NVIDIA): uncomment to accelerate generation
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]
+
+  backend:
+    build: ./backend
+    ports:
+      - "8000:8000"
+    environment:
+      OLLAMA_URL: http://ollama:11434
+      LLM_MODEL: ${LLM_MODEL:-llama3.1:8b}
+      FAST_MODEL: ${FAST_MODEL:-llama3.2:latest}
+      LLM_CONCURRENCY: ${LLM_CONCURRENCY:-1}
+    volumes:
+      - ./backend/chroma_db:/app/chroma_db   # vector index (persists / can be pre-seeded)
+      - ./backend/storage:/app/storage       # users, conversations, analytics, cache
+      - ./backend/data:/app/data             # downloaded TM Forum repos
+    depends_on:
+      - ollama
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        # Browser-reachable backend address — baked at build time.
+        NEXT_PUBLIC_API_URL: http://${SERVER_HOST:-localhost}:8000
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+volumes:
+  ollama-models:

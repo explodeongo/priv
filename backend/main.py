@@ -35,6 +35,9 @@ _chroma_lock = threading.Lock()   # protects singleton + upsert/query overlap
 # ── Config ─────────────────────────────────────────────────────────────────────
 OLLAMA_URL  = os.getenv("OLLAMA_URL",  "http://localhost:11434")
 LLM_MODEL   = os.getenv("LLM_MODEL",  "llama3.1:8b")   # PRD wants an 8B; 3.3 is 70B-only, so 3.1:8b is the real 8B
+FAST_MODEL  = os.getenv("FAST_MODEL", "llama3.2:latest")  # 3B — "fast mode" for quick lookups
+# Serialize LLM generations so concurrent users queue instead of thrashing Ollama.
+LLM_CONCURRENCY = int(os.getenv("LLM_CONCURRENCY", "1"))
 EMBED_MODEL = os.getenv("EMBED_MODEL","nomic-embed-text")
 CHROMA_PATH = os.getenv("CHROMA_PATH","./chroma_db")
 
@@ -96,6 +99,50 @@ def _log_query(question: str, answered: bool, user: str = ""):
 # ── In-memory state ────────────────────────────────────────────────────────────
 PROCESSING_STATUS: dict[str, dict] = {}   # file → {status, chunks, error?}
 QUERY_HITS:        dict[str, int]  = {}   # source → hit count (resets on restart)
+_llm_sem = threading.BoundedSemaphore(max(1, LLM_CONCURRENCY))
+
+# ── Answer cache ───────────────────────────────────────────────────────────────
+# Repeated questions (demos, FAQs) come back instantly instead of re-generating.
+# Only confident, sourced answers are cached; cleared whenever the index changes.
+CACHE_FILE = STORAGE_DIR / "answer_cache.json"
+_cache_lock = threading.Lock()
+_answer_cache: Optional[dict] = None
+
+def _cache() -> dict:
+    global _answer_cache
+    if _answer_cache is None:
+        try:    _answer_cache = json.loads(CACHE_FILE.read_text()) if CACHE_FILE.exists() else {}
+        except Exception: _answer_cache = {}
+    return _answer_cache
+
+def _cache_key(question: str, scope: str, mode: str) -> str:
+    return hashlib.sha1(f"{question.strip().lower()}|{scope}|{mode}".encode()).hexdigest()
+
+def cache_get(question: str, scope: str, mode: str):
+    return _cache().get(_cache_key(question, scope, mode))
+
+def cache_put(question: str, scope: str, mode: str, answer: str, sources: list):
+    if not sources:
+        return                                   # never cache refusals / unsourced answers
+    try:
+        with _cache_lock:
+            c = _cache()
+            c[_cache_key(question, scope, mode)] = {"answer": answer, "sources": sources, "ts": int(time.time())}
+            while len(c) > 300:                  # cap — drop oldest
+                c.pop(min(c, key=lambda k: c[k].get("ts", 0)))
+            CACHE_FILE.write_text(json.dumps(c))
+    except Exception:
+        pass
+
+def cache_clear():
+    """Call whenever the index content changes — cached answers may be stale."""
+    global _answer_cache
+    try:
+        with _cache_lock:
+            _answer_cache = {}
+            CACHE_FILE.write_text("{}")
+    except Exception:
+        pass
 
 # ── Default seed data ──────────────────────────────────────────────────────────
 DEFAULT_BRANDING = {
@@ -437,6 +484,7 @@ def ingest_file_bg(content: bytes, file_name: str, source_name: str, size_mb: fl
             raise ValueError("Embedding failed for all chunks — is Ollama running?")
 
         PROCESSING_STATUS[file_name] = {"status": "indexed", "chunks": stored}
+        cache_clear()                       # new content can change the best answer
         upsert_upload({"file": file_name, "name": source_name, "type": "file", "origin": file_name,
                        "size": f"{size_mb} MB", "status": "indexed",
                        "chunks": stored, "uploaded": time.strftime("%b %d, %Y")})
@@ -490,6 +538,7 @@ def _fail(origin, label, typ, url, err):
 
 def _done(origin, label, typ, url, stored):
     PROCESSING_STATUS[origin] = {"status": "indexed", "chunks": stored}
+    cache_clear()
     upsert_upload({"file": origin, "name": label, "type": typ, "url": url, "origin": origin,
                    "size": typ, "status": "indexed", "chunks": stored,
                    "uploaded": time.strftime("%b %d, %Y")})
@@ -692,8 +741,56 @@ def _unique_specs(chunks: list) -> list:
             seen.append(sid)
     return seen
 
-def build_prompt(question: str, chunks: list[dict], guarded: bool, history=None) -> str:
-    sysp = _system_prompt(guarded)
+# ── Spec version diff ───────────────────────────────────────────────────────────
+_DIFF_INTENT = re.compile(r"\b(difference|differences|diff|changed|changes|compare|comparison|vs|versus|migrat\w*)\b", re.I)
+_VER_TOKEN   = re.compile(r"\bv?(\d+)(?:\.\d+)*\b")
+
+def _file_version(fname: str) -> str:
+    """Major version from a spec filename, e.g. 'TMF622-...-v4.0.0.swagger.json' → '4'."""
+    m = re.search(r"v(\d+)(?:\.\d+)*", fname or "", re.I)
+    return m.group(1) if m else ""
+
+def version_diff_plan(question: str, q_emb: list):
+    """When the question asks what changed between versions of ONE spec, retrieve
+    context from each version separately and return (chunks, extra_instruction);
+    None means 'not a version-diff question — use the normal path'."""
+    if not _DIFF_INTENT.search(question or ""):
+        return None
+    sids = detect_spec_ids(question)
+    if len(sids) != 1:
+        return None                                  # cross-spec comparisons use the normal path
+    col = get_collection()
+    files = sorted(get_spec_map(col).get(sids[0]) or [])
+    by_ver: dict = {}
+    for f in files:
+        v = _file_version(f)
+        if v:
+            by_ver.setdefault(v, []).append(f)
+    if len(by_ver) < 2:
+        return None                                  # only one version indexed
+    asked, seen = [], set()
+    for v in _VER_TOKEN.findall(question):
+        if v in by_ver and v not in seen:
+            asked.append(v); seen.add(v)
+    vers = asked[:2] if len(asked) >= 2 else sorted(by_ver, key=int)[-2:]
+    chunks = []
+    for v in vers:
+        for h in col.query(q_emb, 6, where_in=("file", by_ver[v]))[:4]:
+            chunks.append({"document": h["document"], "metadata": h["metadata"],
+                           "distance": h["distance"], "upload": False, "eff": h["distance"]})
+    if not chunks:
+        return None
+    lo, hi = sorted(vers, key=int)
+    extra = (f"\n\nThis is a VERSION COMPARISON question about {sids[0]}. The context holds chunks from "
+             f"v{lo} and v{hi} of the same spec — each source label names its version. Produce a structured "
+             f"comparison: a Markdown table | Aspect | v{lo} | v{hi} | covering the fields, schemas, operations "
+             "and behaviors that actually differ in the context, citing the version-specific source for each row, "
+             "then one bottom line on what a team migrating between them should watch. State only differences the "
+             "context shows — never invent a change.")
+    return chunks, extra
+
+def build_prompt(question: str, chunks: list[dict], guarded: bool, history=None, extra: str = "") -> str:
+    sysp = _system_prompt(guarded) + extra
     _, index, _ = _ordered_sources(chunks)
     # Number by SOURCE (not by chunk) so multiple chunks of the same spec share one
     # citation number, and so [n] resolves to sources[n-1] on the client.
@@ -703,14 +800,15 @@ def build_prompt(question: str, chunks: list[dict], guarded: bool, history=None)
     )
     return f"{sysp}\n\n{_format_history(history)}CONTEXT:\n{ctx}\n\nQUESTION: {question}\n\nANSWER:"
 
-def generate_answer(prompt: str) -> str:
-    r = requests.post(f"{OLLAMA_URL}/api/generate",
-                      json={"model": LLM_MODEL, "prompt": prompt, "stream": False,
-                            "options": {"temperature": 0.0, "num_predict": 900,
-                                        "stop": ["QUESTION:", "CONTEXT:"]}},
-                      timeout=300)
-    r.raise_for_status()
-    return r.json()["response"].strip()
+def generate_answer(prompt: str, model: str = "") -> str:
+    with _llm_sem:
+        r = requests.post(f"{OLLAMA_URL}/api/generate",
+                          json={"model": model or LLM_MODEL, "prompt": prompt, "stream": False,
+                                "options": {"temperature": 0.0, "num_predict": 900,
+                                            "stop": ["QUESTION:", "CONTEXT:"]}},
+                          timeout=300)
+        r.raise_for_status()
+        return r.json()["response"].strip()
 
 # ── Schemas ────────────────────────────────────────────────────────────────────
 class QueryRequest(BaseModel):
@@ -719,12 +817,13 @@ class QueryRequest(BaseModel):
     scope:    str           = "all"   # "all" = KB + your docs · "kb" = TM Forum only · "docs" = your uploads only
     history:  Optional[list] = None   # [{role, content}] recent turns, for follow-up questions
     standards_filter: Optional[list] = None
+    mode:     str           = "deep"  # "deep" = full 8B model · "fast" = small model for quick lookups
 
 class Source(BaseModel):
     name: str; file: str; chunk: int; preview: str; url: str = ""; upload: bool = False
 
 class QueryResponse(BaseModel):
-    answer: str; sources: list; latency_ms: int; chunks_retrieved: int
+    answer: str; sources: list; latency_ms: int; chunks_retrieved: int; cached: bool = False
 
 class FollowupReq(BaseModel):
     question: str = ""
@@ -961,24 +1060,29 @@ def build_sources(chunks: list) -> list:
         })
     return sources
 
-def stream_ollama(prompt: str):
-    """Yield answer text fragments from Ollama as they are generated."""
-    with requests.post(f"{OLLAMA_URL}/api/generate",
-                       json={"model": LLM_MODEL, "prompt": prompt, "stream": True,
-                             "options": {"temperature": 0.0, "num_predict": 900,
-                                         "stop": ["QUESTION:", "CONTEXT:"]}},
-                       stream=True, timeout=300) as r:
-        r.raise_for_status()
-        for line in r.iter_lines():
-            if not line:
-                continue
-            try:    obj = json.loads(line)
-            except Exception: continue
-            frag = obj.get("response", "")
-            if frag:
-                yield frag
-            if obj.get("done"):
-                break
+def stream_ollama(prompt: str, model: str = ""):
+    """Yield answer text fragments from Ollama as they are generated.
+    Generations are serialized via _llm_sem so concurrent users queue cleanly."""
+    _llm_sem.acquire()
+    try:
+        with requests.post(f"{OLLAMA_URL}/api/generate",
+                           json={"model": model or LLM_MODEL, "prompt": prompt, "stream": True,
+                                 "options": {"temperature": 0.0, "num_predict": 900,
+                                             "stop": ["QUESTION:", "CONTEXT:"]}},
+                           stream=True, timeout=300) as r:
+            r.raise_for_status()
+            for line in r.iter_lines():
+                if not line:
+                    continue
+                try:    obj = json.loads(line)
+                except Exception: continue
+                frag = obj.get("response", "")
+                if frag:
+                    yield frag
+                if obj.get("done"):
+                    break
+    finally:
+        _llm_sem.release()
 
 @app.post("/query", response_model=QueryResponse)
 def query(req: QueryRequest, authorization: Optional[str] = Header(None)):
@@ -991,19 +1095,35 @@ def query(req: QueryRequest, authorization: Optional[str] = Header(None)):
     if scope not in ("all", "kb", "docs"):
         scope = "all"
 
+    mode  = "fast" if (req.mode or "").lower() == "fast" else "deep"
+    model = FAST_MODEL if mode == "fast" else LLM_MODEL
+    if not req.history:                       # follow-ups depend on history — never cache those
+        hit = cache_get(req.question, scope, mode)
+        if hit:
+            _log_query(req.question, True, who)
+            return QueryResponse(answer=hit["answer"], sources=hit["sources"],
+                                 latency_ms=int((time.time()-start)*1000),
+                                 chunks_retrieved=0, cached=True)
+
     rq = _retrieval_query(req.question, req.history)
     try:    q_emb = embed(rq)
     except Exception as e: raise HTTPException(503, f"Embedding failed: {e}")
 
-    try:    chunks, confident, empty = retrieve(rq, q_emb, top_k, scope)
-    except Exception as e: raise HTTPException(503, f"Retrieval failed: {e}")
+    extra = ""
+    plan = version_diff_plan(req.question, q_emb)
+    if plan:
+        chunks, extra = plan
+        confident, empty = True, ""
+    else:
+        try:    chunks, confident, empty = retrieve(rq, q_emb, top_k, scope)
+        except Exception as e: raise HTTPException(503, f"Retrieval failed: {e}")
 
     if not chunks:
         _log_query(req.question, False, who)
         return QueryResponse(answer=empty, sources=[],
                              latency_ms=int((time.time()-start)*1000), chunks_retrieved=0)
 
-    try:    answer = generate_answer(build_prompt(req.question, chunks, guarded=not confident, history=req.history))
+    try:    answer = generate_answer(build_prompt(req.question, chunks, guarded=not confident, history=req.history, extra=extra), model)
     except Exception as e: raise HTTPException(503, f"Generation failed: {e}")
 
     # If the LLM used its exact "no info" escape hatch, return no sources.
@@ -1013,7 +1133,10 @@ def query(req: QueryRequest, authorization: Optional[str] = Header(None)):
                              latency_ms=int((time.time()-start)*1000), chunks_retrieved=0)
 
     _log_query(req.question, True, who)
-    return QueryResponse(answer=answer, sources=build_sources(chunks),
+    srcs = build_sources(chunks)
+    if not req.history:
+        cache_put(req.question, scope, mode, answer, srcs)
+    return QueryResponse(answer=answer, sources=srcs,
                          latency_ms=int((time.time()-start)*1000), chunks_retrieved=len(chunks))
 
 
@@ -1028,10 +1151,29 @@ def query_stream(req: QueryRequest, authorization: Optional[str] = Header(None))
     scope = (req.scope or "all").lower()
     if scope not in ("all", "kb", "docs"):
         scope = "all"
+    mode  = "fast" if (req.mode or "").lower() == "fast" else "deep"
+    model = FAST_MODEL if mode == "fast" else LLM_MODEL
+    if not req.history:
+        hit = cache_get(req.question, scope, mode)
+        if hit:
+            def cached_gen():
+                _log_query(req.question, True, who)
+                yield json.dumps({"type": "token", "text": hit["answer"]}) + "\n"
+                yield json.dumps({"type": "done", "sources": hit["sources"], "cached": True,
+                                  "latency_ms": int((time.time() - start) * 1000),
+                                  "chunks_retrieved": 0}) + "\n"
+            return StreamingResponse(cached_gen(), media_type="application/x-ndjson")
+
     rq = _retrieval_query(req.question, req.history)
     try:    q_emb = embed(rq)
     except Exception as e: raise HTTPException(503, f"Embedding failed: {e}")
-    chunks, confident, empty = retrieve(rq, q_emb, top_k, scope)
+    extra = ""
+    plan = version_diff_plan(req.question, q_emb)
+    if plan:
+        chunks, extra = plan
+        confident, empty = True, ""
+    else:
+        chunks, confident, empty = retrieve(rq, q_emb, top_k, scope)
 
     def gen():
         if not chunks:
@@ -1047,7 +1189,7 @@ def query_stream(req: QueryRequest, authorization: Optional[str] = Header(None))
                           "specs":   _unique_specs(chunks)[:6]}) + "\n"
         acc = ""
         try:
-            for frag in stream_ollama(build_prompt(req.question, chunks, guarded=not confident, history=req.history)):
+            for frag in stream_ollama(build_prompt(req.question, chunks, guarded=not confident, history=req.history, extra=extra), model):
                 acc += frag
                 yield json.dumps({"type": "token", "text": frag}) + "\n"
         except Exception as e:
@@ -1055,6 +1197,8 @@ def query_stream(req: QueryRequest, authorization: Optional[str] = Header(None))
             return
         srcs = [] if acc.lower().strip().startswith(NO_INFO_PREFIX) else build_sources(chunks)
         _log_query(req.question, bool(srcs), who)
+        if not req.history:
+            cache_put(req.question, scope, mode, acc, srcs)
         yield json.dumps({"type": "done", "sources": srcs,
                           "latency_ms": int((time.time() - start) * 1000),
                           "chunks_retrieved": len(chunks)}) + "\n"
@@ -1263,6 +1407,7 @@ def delete_document(file_name: str):
 
     remove_upload_record(file_name)
     PROCESSING_STATUS.pop(file_name, None)
+    cache_clear()
     raw = UPLOADS_DIR / file_name
     if raw.exists(): raw.unlink()
 
@@ -1558,6 +1703,7 @@ def refresh_kb(_admin: dict = Depends(require_admin)):
             with _chroma_lock:                 # force re-open of the rebuilt collection
                 reset_store()
                 _spec_map = None; _spec_names = []
+            cache_clear()
             PROCESSING_STATUS["__kb_refresh__"] = {"status": "indexed", "chunks": n}
         except Exception as e:
             PROCESSING_STATUS["__kb_refresh__"] = {"status": "failed", "chunks": 0, "error": str(e)[:200]}

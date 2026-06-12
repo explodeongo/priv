@@ -34,6 +34,7 @@ interface Message {
   sources?: Source[];
   latency_ms?: number;
   error?: boolean;
+  cached?: boolean;
 }
 
 const SUGGESTED = [
@@ -258,6 +259,7 @@ export default function Home() {
   const [prefs, setPrefs] = useState({ topK: 5, showSrc: true });
   const [logo, setLogo] = useState<string | undefined>();
   const [scope, setScope] = useState<"all" | "kb" | "docs">("all");
+  const [mode, setMode]   = useState<"deep" | "fast">("deep");
   const [chatCfg, setChatCfg] = useState<{ placeholder: string; suggestions: string[] }>({
     placeholder: "Ask about TM Forum APIs, ODA, eTOM, SID...", suggestions: SUGGESTED,
   });
@@ -353,7 +355,7 @@ export default function Home() {
       const res = await fetch(`${API}/query/stream`, {
         method: "POST",
         headers: authH(true),
-        body: JSON.stringify({ question, top_k: prefs.topK, scope, history }),
+        body: JSON.stringify({ question, top_k: prefs.topK, scope, history, mode }),
         signal: controller.signal,
       });
       if (!res.ok || !res.body) throw new Error(`API error ${res.status}`);
@@ -373,7 +375,7 @@ export default function Home() {
           try { evt = JSON.parse(line); } catch { continue; }
           if (evt.type === "context")    { setTrace({ specs: evt.specs || [], sources: evt.sources || [] }); }
           else if (evt.type === "token") { acc += evt.text; setLast({ content: acc }); }
-          else if (evt.type === "done")  { doneSources = evt.sources; doneLatency = evt.latency_ms; setLast({ sources: evt.sources, latency_ms: evt.latency_ms }); }
+          else if (evt.type === "done")  { doneSources = evt.sources; doneLatency = evt.latency_ms; setLast({ sources: evt.sources, latency_ms: evt.latency_ms, cached: !!evt.cached }); }
           else if (evt.type === "error") { acc = evt.text; hadError = true; setLast({ content: acc, error: true }); }
         }
       }
@@ -401,7 +403,7 @@ export default function Home() {
       setLoading(false);
       inputRef.current?.focus();
     }
-  }, [scope, prefs, activeId]);
+  }, [scope, mode, prefs, activeId]);
 
   const ask = useCallback((question: string) => {
     if (!question.trim() || loading) return;
@@ -618,9 +620,11 @@ export default function Home() {
                           )}
                         </span>
                       ))}
-                      {msg.latency_ms && (
+                      {msg.cached ? (
+                        <span className="text-xs text-amber-500 ml-1" title="Served from the answer cache">⚡ instant</span>
+                      ) : msg.latency_ms ? (
                         <span className="text-xs text-gray-300 ml-1">{(msg.latency_ms / 1000).toFixed(1)}s</span>
-                      )}
+                      ) : null}
                     </div>
                   )}
 
@@ -685,6 +689,16 @@ export default function Home() {
                 {label}
               </button>
             ))}
+            <span className="flex-1" />
+            <button type="button" onClick={() => setMode(m => (m === "deep" ? "fast" : "deep"))}
+              title={mode === "deep" ? "Deep: full 8B model — best quality" : "Fast: small model — quick lookups"}
+              className={`text-xs px-2.5 py-1 rounded-full border transition-colors flex items-center gap-1 ${
+                mode === "fast"
+                  ? "bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400 border-amber-300 dark:border-amber-500/40"
+                  : "bg-white dark:bg-slate-800 text-gray-500 dark:text-slate-400 border-gray-200 dark:border-slate-700 hover:bg-gray-50 dark:hover:bg-slate-700"
+              }`}>
+              {mode === "fast" ? "⚡ Fast" : "🧠 Deep"}
+            </button>
           </div>
           <div className="max-w-3xl mx-auto flex items-end gap-3">
             <textarea ref={inputRef} value={input}

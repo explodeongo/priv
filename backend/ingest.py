@@ -11,7 +11,7 @@ from pathlib import Path
 import chromadb
 
 # ── Config ─────────────────────────────────────────────────────────────────
-OLLAMA_URL   = "http://localhost:11434"
+OLLAMA_URL   = os.environ.get("OLLAMA_URL", "http://localhost:11434")
 EMBED_MODEL  = "nomic-embed-text"
 CHROMA_PATH  = "./chroma_db"
 DATA_PATH    = "./data"
