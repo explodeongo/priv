@@ -185,13 +185,13 @@ function UserManagementTab() {
               <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
             </svg>
             <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search users…"
-              className="border border-gray-200 dark:border-slate-700 rounded-xl pl-9 pr-4 py-2 text-sm text-gray-700 dark:text-slate-300 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-red-500 bg-white w-56" />
+              className="border border-gray-200 dark:border-slate-700 rounded-xl pl-9 pr-4 py-2 text-sm text-gray-700 dark:text-slate-300 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-red-500 bg-white dark:bg-slate-800 w-56" />
           </div>
           <div className="flex gap-1 bg-gray-100 dark:bg-slate-800 rounded-xl p-1">
             {(["all","admin","analyst","viewer"] as const).map(r => (
               <button key={r} onClick={() => setFilter(r)}
                 className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all capitalize ${
-                  filter === r ? "bg-white dark:bg-slate-700 text-gray-900 dark:text-slate-100 shadow-sm" : "text-gray-500 dark:text-slate-400 hover:text-gray-700 dark:text-slate-300"
+                  filter === r ? "bg-white dark:bg-slate-700 text-gray-900 dark:text-slate-100 shadow-sm" : "text-gray-500 dark:text-slate-400 hover:text-gray-700 dark:hover:text-slate-300"
                 }`}>{r}</button>
             ))}
           </div>
@@ -216,7 +216,7 @@ function UserManagementTab() {
               className="border border-gray-200 dark:border-slate-700 rounded-xl px-3.5 py-2.5 text-sm text-gray-900 dark:text-slate-100 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-red-500" />
             <div className="flex gap-2">
               <select value={invRole} onChange={e => setInvRole(e.target.value as UserRole)}
-                className="flex-1 border border-gray-200 dark:border-slate-700 rounded-xl px-3 py-2.5 text-sm text-gray-700 dark:text-slate-300 focus:outline-none focus:ring-2 focus:ring-red-500 bg-white">
+                className="flex-1 border border-gray-200 dark:border-slate-700 rounded-xl px-3 py-2.5 text-sm text-gray-700 dark:text-slate-300 focus:outline-none focus:ring-2 focus:ring-red-500 bg-white dark:bg-slate-800">
                 <option value="viewer">Viewer</option>
                 <option value="analyst">Analyst</option>
                 <option value="admin">Admin</option>
@@ -248,7 +248,7 @@ function UserManagementTab() {
               {visible.map(u => {
                 const init = u.name.split(" ").map(n => n[0]).join("").slice(0, 2).toUpperCase();
                 return (
-                  <tr key={u.id} className="hover:bg-gray-50 dark:bg-slate-800/70 transition-colors">
+                  <tr key={u.id} className="hover:bg-gray-50 dark:hover:bg-slate-800/70 transition-colors">
                     <td className="px-5 py-4">
                       <div className="flex items-center gap-3">
                         <div className="w-8 h-8 rounded-full bg-red-600 flex items-center justify-center text-white text-xs font-bold flex-shrink-0">{init}</div>
@@ -262,12 +262,12 @@ function UserManagementTab() {
                       {editRole === u.id ? (
                         <div className="flex items-center gap-1.5">
                           <select defaultValue={u.role} onChange={e => changeRole(u.id, e.target.value as UserRole)}
-                            className="border border-gray-200 dark:border-slate-700 rounded-lg px-2 py-1 text-xs text-gray-700 dark:text-slate-300 focus:outline-none focus:ring-1 focus:ring-red-500 bg-white">
+                            className="border border-gray-200 dark:border-slate-700 rounded-lg px-2 py-1 text-xs text-gray-700 dark:text-slate-300 focus:outline-none focus:ring-1 focus:ring-red-500 bg-white dark:bg-slate-800">
                             <option value="viewer">Viewer</option>
                             <option value="analyst">Analyst</option>
                             <option value="admin">Admin</option>
                           </select>
-                          <button onClick={() => setEditRole(null)} className="text-gray-400 hover:text-gray-600 dark:text-slate-400">
+                          <button onClick={() => setEditRole(null)} className="text-gray-400 hover:text-gray-600 dark:hover:text-slate-400">
                             <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
                               <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
                             </svg>
@@ -355,14 +355,79 @@ function AnalyticsTab() {
 
   return (
     <div className="space-y-6">
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
         <Stat label="Total queries" val={data.total_queries} />
         <Stat label="Answered" val={data.answered} sub={`${rate}% answer rate`} />
+        <Stat label="Weekly active users" val={data.wau ?? 0} sub="last 7 days" />
         <Stat label="👍 Helpful" val={fb.up} />
         <Stat label="👎 Not helpful" val={fb.down} />
       </div>
 
-      <div className="grid md:grid-cols-2 gap-6">
+      {/* Daily activity — the adoption graph */}
+      <div className="bg-white dark:bg-slate-900 rounded-2xl border border-gray-200 dark:border-slate-700 shadow-sm overflow-hidden">
+        <div className="px-6 py-4 border-b border-gray-100 dark:border-slate-800 flex items-center justify-between">
+          <div>
+            <h2 className="text-sm font-semibold text-gray-900 dark:text-slate-100">Daily activity</h2>
+            <p className="text-xs text-gray-400 mt-0.5">Queries per day, last 14 days</p>
+          </div>
+          <div className="flex items-center gap-3 text-[11px] text-gray-400 dark:text-slate-500">
+            <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-sm bg-red-500/80" /> answered</span>
+            <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-sm bg-gray-300 dark:bg-slate-600" /> unanswered</span>
+          </div>
+        </div>
+        <div className="px-6 pt-5 pb-4">
+          {(() => {
+            const series: any[] = data.series || [];
+            const maxQ = Math.max(1, ...series.map(s => s.q));
+            return (
+              <>
+                <div className="flex items-end gap-1.5 h-28">
+                  {series.map((s, i) => {
+                    const total = Math.round((s.q / maxQ) * 100);
+                    const ans   = s.q ? Math.round((s.a / s.q) * total) : 0;
+                    return (
+                      <div key={i} className="flex-1 flex flex-col justify-end h-full group relative" title={`${s.day} — ${s.q} queries, ${s.a} answered`}>
+                        {s.q > 0 ? (
+                          <div className="w-full rounded-t-md overflow-hidden flex flex-col justify-end" style={{ height: `${Math.max(total, 6)}%` }}>
+                            <div className="w-full bg-gray-300 dark:bg-slate-600" style={{ height: `${100 - (s.q ? (s.a / s.q) * 100 : 0)}%` }} />
+                            <div className="w-full bg-red-500/80 flex-1" />
+                          </div>
+                        ) : (
+                          <div className="w-full h-[3px] rounded bg-gray-100 dark:bg-slate-800" />
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+                <div className="flex gap-1.5 mt-2">
+                  {series.map((s, i) => (
+                    <div key={i} className="flex-1 text-center text-[9px] text-gray-400 dark:text-slate-500">
+                      {(i === 0 || i === series.length - 1 || i === Math.floor(series.length / 2)) ? s.day : ""}
+                    </div>
+                  ))}
+                </div>
+              </>
+            );
+          })()}
+        </div>
+      </div>
+
+      <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
+        <div className="bg-white dark:bg-slate-900 rounded-2xl border border-gray-200 dark:border-slate-700 shadow-sm overflow-hidden">
+          <div className="px-6 py-4 border-b border-gray-100 dark:border-slate-800">
+            <h2 className="text-sm font-semibold text-gray-900 dark:text-slate-100">Most active users</h2>
+            <p className="text-xs text-gray-400 mt-0.5">Queries in the last 30 days</p>
+          </div>
+          <div className="p-4 space-y-1.5 max-h-72 overflow-y-auto">
+            {(data.active_users || []).length === 0 && <p className="text-xs text-gray-400">No attributed queries yet — users appear once they ask while signed in.</p>}
+            {(data.active_users || []).map((u: any, i: number) => (
+              <div key={i} className="flex items-center justify-between text-sm">
+                <span className="text-gray-700 dark:text-slate-300 truncate mr-2">{u.user}</span>
+                <span className="text-gray-400 font-medium flex-shrink-0">{u.queries}</span>
+              </div>
+            ))}
+          </div>
+        </div>
         <div className="bg-white dark:bg-slate-900 rounded-2xl border border-gray-200 dark:border-slate-700 shadow-sm overflow-hidden">
           <div className="px-6 py-4 border-b border-gray-100 dark:border-slate-800"><h2 className="text-sm font-semibold text-gray-900 dark:text-slate-100">Top specs queried</h2></div>
           <div className="p-4 space-y-1.5">
@@ -597,7 +662,7 @@ function BrandingTab() {
           </div>
           <div className="flex items-center gap-3">
             <label className="text-xs text-gray-500 dark:text-slate-400 font-medium flex-shrink-0">Custom hex</label>
-            <div className="flex items-center gap-2 border border-gray-200 dark:border-slate-700 rounded-xl px-3 py-2 bg-white">
+            <div className="flex items-center gap-2 border border-gray-200 dark:border-slate-700 rounded-xl px-3 py-2 bg-white dark:bg-slate-800">
               <input type="color" value={color} onChange={e => setColor(e.target.value)}
                 className="w-5 h-5 rounded cursor-pointer border-0 bg-transparent" />
               <span className="text-sm font-mono text-gray-600 dark:text-slate-400">{color.toUpperCase()}</span>
@@ -764,7 +829,7 @@ function RBACTab() {
             </thead>
             <tbody className="divide-y divide-gray-50">
               {PERMISSIONS.map(p => (
-                <tr key={p.key} className="hover:bg-gray-50 dark:bg-slate-800/60 transition-colors">
+                <tr key={p.key} className="hover:bg-gray-50 dark:hover:bg-slate-800/60 transition-colors">
                   <td className="px-6 py-3.5">
                     <div className="text-sm font-medium text-gray-800 dark:text-slate-200">{p.label}</div>
                     <div className="text-xs text-gray-400">{p.desc}</div>
@@ -778,7 +843,7 @@ function RBACTab() {
                           className={`w-5 h-5 rounded-md border-2 flex items-center justify-center mx-auto transition-all ${
                             locked   ? "cursor-not-allowed bg-red-500 border-red-500 opacity-70" :
                             checked  ? "bg-red-600 border-red-600 hover:bg-red-700" :
-                                       "border-gray-300 bg-white hover:border-red-400"
+                                       "border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-800 hover:border-red-400"
                           }`}>
                           {checked && (
                             <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="3.5">
@@ -848,11 +913,11 @@ export default function AdminPage() {
           <span className="text-[11px] font-bold bg-red-100 text-red-700 px-2.5 py-1 rounded-full">Admin only</span>
         </header>
 
-        <div className="flex border-b border-gray-200 dark:border-slate-700 bg-white px-6 flex-shrink-0">
+        <div className="flex border-b border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-6 flex-shrink-0">
           {tabs.map(t => (
             <button key={t.id} onClick={() => setTab(t.id)}
               className={`px-5 py-3.5 text-sm font-medium border-b-2 transition-all -mb-px ${
-                tab === t.id ? "border-red-600 text-red-600" : "border-transparent text-gray-500 dark:text-slate-400 hover:text-gray-800 dark:text-slate-200"
+                tab === t.id ? "border-red-600 text-red-600" : "border-transparent text-gray-500 dark:text-slate-400 hover:text-gray-800 dark:hover:text-slate-200"
               }`}>{t.label}</button>
           ))}
         </div>

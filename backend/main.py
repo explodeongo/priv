@@ -66,8 +66,9 @@ ANALYTICS_FILE = STORAGE_DIR / "analytics.json"
 FEEDBACK_FILE  = STORAGE_DIR / "feedback.json"
 _analytics_lock = threading.Lock()
 
-def _log_query(question: str, answered: bool):
-    """Track query volume + 'knowledge gaps' (questions we couldn't answer)."""
+def _log_query(question: str, answered: bool, user: str = ""):
+    """Track query volume, per-day series, per-user activity, and 'knowledge gaps'
+    (questions we couldn't answer). Powers the adoption dashboard."""
     try:
         with _analytics_lock:
             a = json.loads(ANALYTICS_FILE.read_text()) if ANALYTICS_FILE.exists() else {}
@@ -78,6 +79,16 @@ def _log_query(question: str, answered: bool):
                 gaps = a.get("gaps", [])
                 gaps.insert(0, {"q": question[:200], "ts": int(time.time())})
                 a["gaps"] = gaps[:50]
+            day = time.strftime("%Y-%m-%d")
+            days = a.get("days", {})
+            d = days.get(day, {"q": 0, "a": 0, "users": {}})
+            d["q"] += 1
+            if answered:
+                d["a"] += 1
+            who = (user or "anonymous").lower()
+            d["users"][who] = d["users"].get(who, 0) + 1
+            days[day] = d
+            a["days"] = {k: days[k] for k in sorted(days)[-90:]}   # keep 90 days
             ANALYTICS_FILE.write_text(json.dumps(a))
     except Exception:
         pass
@@ -103,7 +114,7 @@ DEFAULT_CHAT_CONFIG = {
         "What is the difference between TMF620 and TMF633?",
         "How do I handle pagination in TM Forum Open APIs?",
         "Which ODA component handles trouble tickets?",
-        "Explain the eTOM Level 1 processes",
+        "How do I create a service order with TMF641?",
         "What is the SID ABE for customer data?",
     ],
 }
@@ -196,6 +207,19 @@ def require_admin(user: dict = Depends(current_user)) -> dict:
     if user.get("role") != "admin":
         raise HTTPException(403, "Admin access required")
     return user
+
+def optional_user_email(authorization: Optional[str]) -> str:
+    """Best-effort identity for analytics — '' when not logged in, never raises."""
+    try:
+        if not authorization or not authorization.lower().startswith("bearer "):
+            return ""
+        payload = verify_token(authorization.split(" ", 1)[1].strip())
+        if not payload:
+            return ""
+        u = next((x for x in _load_users() if x.get("id") == payload.get("uid")), None)
+        return (u or {}).get("email", "") or ""
+    except Exception:
+        return ""
 
 # ── App ────────────────────────────────────────────────────────────────────────
 app = FastAPI(title="SynaptDI API", version="2.0.0")
@@ -605,7 +629,7 @@ When asked what fields a resource requires, this almost always means what you mu
 
 _GUARD_LINE = """
 
-If the CONTEXT does not address the question at all, reply with exactly:
+If the CONTEXT does not address the question, or the question is outside the telecom/standards domain entirely (general knowledge, geography, trivia, current events), do NOT answer from your own knowledge — reply with exactly:
 "I don't have enough information in the current knowledge base to answer this. The relevant document may not be indexed yet." """
 
 def _system_prompt(guarded: bool) -> str:
@@ -758,6 +782,7 @@ _FOCUS_STOP   = {"what","whats","which","whose","does","do","did","the","a","an"
 _GENERIC_SCHEMAS = ("eventsubscription","hub","event","notification","error","extensibleerror","meta",
                     "entityref","timeperiod","money","quantity","note","characteristic","attachmentref")
 LEX_WEIGHT = 0.12   # hybrid re-rank: how much a full keyword match can pull a chunk up
+DOMAIN_GUARD_DIST = 0.34   # best-hit distance worse than this + zero keyword overlap ⇒ off-domain
 
 def _schema_name(doc: str) -> str:
     m = _SCHEMA_RE.search(doc or "")
@@ -886,6 +911,23 @@ def retrieve(question: str, q_emb: list, top_k: int, scope: str):
             msg = NO_INFO_MSG
         return [], False, msg
 
+    # Domain guard: when retrieval is semantically weak AND the question shares zero
+    # vocabulary with what it retrieved, it's off-domain trivia (e.g. "capital of
+    # France" lands at 0.36 — closer than some real eTOM questions, so a distance
+    # floor alone can't work). Feeding the LLM junk context makes it answer from
+    # world knowledge; refuse instead. Measured: in-domain questions always share
+    # at least one content term with their retrieved chunks.
+    if scope != "docs" and not matched:
+        best_raw = min(c["distance"] for c in chunks)
+        terms = focus.get("terms") or []
+        if terms and best_raw > DOMAIN_GUARD_DIST:
+            # Count overlap only in semantically close chunks (raw ≤ 0.40) — the
+            # lexical re-rank can boost a far chunk that shares one incidental word
+            # ("capital" in a finance doc), and that must not defeat the guard.
+            blob = " ".join(c["document"].lower() for c in chunks if c["distance"] <= 0.40)
+            if not any(t in blob for t in terms):
+                return [], False, NO_INFO_MSG
+
     chunks.sort(key=lambda c: c.get("eff", c["distance"]))   # schema-aware order → best match becomes [Source 1]
     best = min(c["distance"] for c in chunks)
     if scope == "docs":
@@ -939,7 +981,8 @@ def stream_ollama(prompt: str):
                 break
 
 @app.post("/query", response_model=QueryResponse)
-def query(req: QueryRequest):
+def query(req: QueryRequest, authorization: Optional[str] = Header(None)):
+    who = optional_user_email(authorization)
     if not req.question.strip():
         raise HTTPException(400, "Question cannot be empty")
     start = time.time()
@@ -956,7 +999,7 @@ def query(req: QueryRequest):
     except Exception as e: raise HTTPException(503, f"Retrieval failed: {e}")
 
     if not chunks:
-        _log_query(req.question, False)
+        _log_query(req.question, False, who)
         return QueryResponse(answer=empty, sources=[],
                              latency_ms=int((time.time()-start)*1000), chunks_retrieved=0)
 
@@ -965,18 +1008,19 @@ def query(req: QueryRequest):
 
     # If the LLM used its exact "no info" escape hatch, return no sources.
     if answer.lower().strip().startswith(NO_INFO_PREFIX):
-        _log_query(req.question, False)
+        _log_query(req.question, False, who)
         return QueryResponse(answer=answer, sources=[],
                              latency_ms=int((time.time()-start)*1000), chunks_retrieved=0)
 
-    _log_query(req.question, True)
+    _log_query(req.question, True, who)
     return QueryResponse(answer=answer, sources=build_sources(chunks),
                          latency_ms=int((time.time()-start)*1000), chunks_retrieved=len(chunks))
 
 
 # ── Query (streaming, token-by-token) ────────────────────────────────────────
 @app.post("/query/stream")
-def query_stream(req: QueryRequest):
+def query_stream(req: QueryRequest, authorization: Optional[str] = Header(None)):
+    who = optional_user_email(authorization)
     if not req.question.strip():
         raise HTTPException(400, "Question cannot be empty")
     start = time.time()
@@ -991,7 +1035,7 @@ def query_stream(req: QueryRequest):
 
     def gen():
         if not chunks:
-            _log_query(req.question, False)
+            _log_query(req.question, False, who)
             yield json.dumps({"type": "token", "text": empty}) + "\n"
             yield json.dumps({"type": "done", "sources": [],
                               "latency_ms": int((time.time() - start) * 1000),
@@ -1010,7 +1054,7 @@ def query_stream(req: QueryRequest):
             yield json.dumps({"type": "error", "text": f"Generation failed: {e}"}) + "\n"
             return
         srcs = [] if acc.lower().strip().startswith(NO_INFO_PREFIX) else build_sources(chunks)
-        _log_query(req.question, bool(srcs))
+        _log_query(req.question, bool(srcs), who)
         yield json.dumps({"type": "done", "sources": srcs,
                           "latency_ms": int((time.time() - start) * 1000),
                           "chunks_retrieved": len(chunks)}) + "\n"
@@ -1465,11 +1509,33 @@ def get_analytics(_admin: dict = Depends(require_admin)):
     try:    fb = json.loads(FEEDBACK_FILE.read_text()) if FEEDBACK_FILE.exists() else []
     except Exception: fb = []
     top = sorted(QUERY_HITS.items(), key=lambda x: -x[1])[:10]
+
+    # ── Adoption series ──────────────────────────────────────────────────────
+    days_raw = a.get("days", {})
+    today = time.time()
+    last14 = [time.strftime("%Y-%m-%d", time.localtime(today - i * 86400)) for i in range(13, -1, -1)]
+    series = [{"day": d[5:],                       # "MM-DD" for compact axis labels
+               "q": days_raw.get(d, {}).get("q", 0),
+               "a": days_raw.get(d, {}).get("a", 0)} for d in last14]
+    last7 = set(time.strftime("%Y-%m-%d", time.localtime(today - i * 86400)) for i in range(7))
+    wau_users = set()
+    for d in last7:
+        wau_users.update(u for u in days_raw.get(d, {}).get("users", {}) if u != "anonymous")
+    last30 = set(time.strftime("%Y-%m-%d", time.localtime(today - i * 86400)) for i in range(30))
+    per_user: dict = {}
+    for d in last30:
+        for u, n in days_raw.get(d, {}).get("users", {}).items():
+            per_user[u] = per_user.get(u, 0) + n
+    active = sorted(per_user.items(), key=lambda kv: -kv[1])[:10]
+
     return {
         "total_queries": a.get("total", 0),
         "answered":      a.get("answered", 0),
         "gaps":          a.get("gaps", [])[:20],
         "top_sources":   [{"name": k, "hits": v} for k, v in top],
+        "series":        series,
+        "wau":           len(wau_users),
+        "active_users":  [{"user": u, "queries": n} for u, n in active],
         "feedback": {
             "up":   sum(1 for f in fb if f.get("rating") == "up"),
             "down": sum(1 for f in fb if f.get("rating") == "down"),

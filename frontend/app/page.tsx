@@ -41,7 +41,7 @@ const SUGGESTED = [
   "What is the difference between TMF620 and TMF633?",
   "How do I handle pagination in TM Forum Open APIs?",
   "Which ODA component handles trouble tickets?",
-  "Explain the eTOM Level 1 processes",
+  "How do I create a service order with TMF641?",
   "What is the SID ABE for customer data?",
 ];
 
@@ -352,7 +352,7 @@ export default function Home() {
     try {
       const res = await fetch(`${API}/query/stream`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: authH(true),
         body: JSON.stringify({ question, top_k: prefs.topK, scope, history }),
         signal: controller.signal,
       });
