@@ -90,8 +90,7 @@ function ManagementTab({ user }: { user: { role: string } | null }) {
   // ── Library (data/ folder) state ──────────────────────────────────────────
   const [libGroups, setLibGroups]     = useState<LibraryGroup[]>([]);
   const [libSummary, setLibSummary]   = useState({ total_files: 0, total_chunks: 0 });
-  const [libExpanded, setLibExpanded] = useState<Set<string>>(new Set());
-  const [libSearch, setLibSearch]     = useState("");
+  const [activeLib, setActiveLib]     = useState<string | null>(null);
   const [loadingLib, setLoadingLib]   = useState(true);
 
   const canUpload = user?.role === "admin" || user?.role === "analyst";
@@ -140,7 +139,6 @@ function ManagementTab({ user }: { user: { role: string } | null }) {
       const data = await r.json();
       setLibGroups(data.groups ?? []);
       setLibSummary({ total_files: data.total_files ?? 0, total_chunks: data.total_chunks ?? 0 });
-      if (data.groups?.length) setLibExpanded(new Set([data.groups[0].id]));
     } catch {}
   }, []);
 
@@ -255,17 +253,14 @@ function ManagementTab({ user }: { user: { role: string } | null }) {
     chunks:     docs.reduce((s, d) => s + (d.chunks || 0), 0),
   };
 
-  const toggleLib = (id: string) =>
-    setLibExpanded(prev => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; });
-
-  const filteredLibGroups = libGroups.map(g => ({
-    ...g,
-    documents: g.documents.filter(d =>
-      libSearch === "" ||
-      d.name.toLowerCase().includes(libSearch.toLowerCase()) ||
-      d.file.toLowerCase().includes(libSearch.toLowerCase())
-    ),
-  })).filter(g => libSearch === "" || g.documents.length > 0);
+  // The ONE search box filters uploads AND the knowledge base. While searching,
+  // KB results flatten into a direct file list — no folder-opening hunt.
+  const q = search.trim().toLowerCase();
+  const libMatches = q
+    ? libGroups.flatMap(g => g.documents
+        .filter(d => d.name.toLowerCase().includes(q) || d.file.toLowerCase().includes(q))
+        .map(d => ({ ...d, group: g.name })))
+    : [];
 
   return (
     <div className="space-y-6">
@@ -291,22 +286,24 @@ function ManagementTab({ user }: { user: { role: string } | null }) {
           onDragLeave={() => setDragging(false)}
           onDrop={handleDrop}
           onClick={() => fileRef.current?.click()}
-          className={`border-2 border-dashed rounded-2xl p-8 text-center cursor-pointer transition-all ${
-            dragging ? "border-red-400 bg-red-50" : "border-gray-200 dark:border-slate-700 hover:border-red-300 hover:bg-red-50/30"
+          className={`border-2 border-dashed rounded-2xl px-5 py-4 cursor-pointer transition-all flex items-center gap-4 ${
+            dragging ? "border-red-400 bg-red-50" : "border-gray-200 dark:border-slate-700 hover:border-red-300 hover:bg-red-50/30 dark:hover:bg-slate-800/40"
           }`}
         >
           <input ref={fileRef} type="file" accept=".pdf,.docx,.xlsx,.pptx,.csv,.txt,.md,.json,.yaml,.yml"
             className="hidden" onChange={handleFileInput} />
-          <div className={`w-12 h-12 rounded-2xl flex items-center justify-center mx-auto mb-3 transition-colors ${dragging ? "bg-red-100" : "bg-gray-100 dark:bg-slate-800"}`}>
-            <svg className={`w-6 h-6 transition-colors ${dragging ? "text-red-500" : "text-gray-400"}`}
+          <div className={`w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 transition-colors ${dragging ? "bg-red-100" : "bg-gray-100 dark:bg-slate-800"}`}>
+            <svg className={`w-5 h-5 transition-colors ${dragging ? "text-red-500" : "text-gray-400"}`}
               fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.5">
               <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/>
             </svg>
           </div>
-          <p className={`text-sm font-semibold transition-colors ${dragging ? "text-red-600" : "text-gray-600 dark:text-slate-400"}`}>
-            {dragging ? "Drop to upload & index" : "Drag & drop to upload"}
-          </p>
-          <p className="text-xs text-gray-400 mt-1">PDF, DOCX, XLSX, PPTX, CSV, TXT, MD, JSON, YAML · Click to browse</p>
+          <div className="min-w-0">
+            <p className={`text-sm font-semibold transition-colors ${dragging ? "text-red-600" : "text-gray-700 dark:text-slate-300"}`}>
+              {dragging ? "Drop to upload & index" : "Drag & drop to upload — or click to browse"}
+            </p>
+            <p className="text-xs text-gray-400 mt-0.5">PDF, DOCX, XLSX, PPTX, CSV, TXT, MD, JSON, YAML</p>
+          </div>
         </div>
       )}
 
@@ -357,7 +354,7 @@ function ManagementTab({ user }: { user: { role: string } | null }) {
             fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
             <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
           </svg>
-          <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search documents…"
+          <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search everything — your documents & all knowledge-base specs…"
             className="w-full border border-gray-200 dark:border-slate-700 rounded-xl pl-9 pr-4 py-2 text-sm text-gray-700 dark:text-slate-300 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-red-500 bg-white dark:bg-slate-800" />
         </div>
         <div className="flex gap-1 bg-gray-100 dark:bg-slate-800 rounded-xl p-1">
@@ -388,8 +385,8 @@ function ManagementTab({ user }: { user: { role: string } | null }) {
           <table className="w-full">
             <thead>
               <tr className="bg-gray-50 dark:bg-slate-800 border-b border-gray-100 dark:border-slate-800">
-                {["Document","Status","Chunks","Size","Uploaded",""].map((h, i) => (
-                  <th key={i} className={`text-[11px] font-bold text-gray-400 uppercase tracking-widest px-5 py-3.5 ${i === 0 ? "text-left" : "text-center"}`}>{h}</th>
+                {["Document","Status","Chunks",""].map((h, i) => (
+                  <th key={i} className={`text-[11px] font-bold text-gray-400 uppercase tracking-widest px-5 py-2.5 ${i === 0 ? "text-left" : "text-center"}`}>{h}</th>
                 ))}
               </tr>
             </thead>
@@ -397,7 +394,7 @@ function ManagementTab({ user }: { user: { role: string } | null }) {
               {folderGroups.map(g => (
                 <Fragment key={g.cat}>
                   <tr className="bg-gray-50 dark:bg-slate-800/60 hover:bg-gray-100 dark:hover:bg-slate-800/60 cursor-pointer select-none" onClick={() => toggleCat(g.cat)}>
-                    <td colSpan={6} className="px-5 py-2.5">
+                    <td colSpan={4} className="px-5 py-2">
                       <div className="flex items-center gap-2 text-sm font-semibold text-gray-700 dark:text-slate-300">
                         <svg className={`w-3.5 h-3.5 text-gray-400 transition-transform ${collapsedCats.has(g.cat) ? "" : "rotate-90"}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><polyline points="9 18 15 12 9 6"/></svg>
                         <svg className="w-4 h-4 text-amber-500" fill="currentColor" viewBox="0 0 24 24"><path d="M10 4H4a2 2 0 00-2 2v12a2 2 0 002 2h16a2 2 0 002-2V8a2 2 0 00-2-2h-8l-2-2z"/></svg>
@@ -406,12 +403,12 @@ function ManagementTab({ user }: { user: { role: string } | null }) {
                       </div>
                     </td>
                   </tr>
-                  {!collapsedCats.has(g.cat) && g.docs.map(doc => (
+                  {(search.trim() !== "" || !collapsedCats.has(g.cat)) && g.docs.map(doc => (
                     <tr key={doc.file} className="hover:bg-gray-50 dark:hover:bg-slate-800/70 transition-colors group">
-                  <td className="px-5 py-4">
+                  <td className="px-5 py-2.5">
                     <div className="flex items-center gap-3">
-                      <div className="w-8 h-8 bg-red-50 border border-red-100 rounded-lg flex items-center justify-center flex-shrink-0">
-                        <svg className="w-4 h-4 text-red-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.5">
+                      <div className="w-7 h-7 bg-red-50 dark:bg-red-500/10 border border-red-100 dark:border-red-500/20 rounded-lg flex items-center justify-center flex-shrink-0">
+                        <svg className="w-3.5 h-3.5 text-red-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.5">
                           <path strokeLinecap="round" strokeLinejoin="round" d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z"/>
                         </svg>
                       </div>
@@ -423,34 +420,27 @@ function ManagementTab({ user }: { user: { role: string } | null }) {
                               {doc.type === "repo" ? "GIT REPO" : "WEB"}
                             </span>
                           )}
-                          {doc.category && (
-                            <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-blue-50 text-blue-700 border border-blue-200 flex-shrink-0">
-                              {doc.category}
-                            </span>
-                          )}
                         </div>
-                        <div className="text-xs text-gray-400 font-mono truncate">{doc.url || doc.file}</div>
+                        <div className="text-xs text-gray-400 truncate">
+                          <span className="font-mono">{doc.url || doc.file}</span>
+                          {doc.size ? <span> · {doc.size}</span> : null}
+                          {doc.uploaded ? <span> · {doc.uploaded}</span> : null}
+                        </div>
                         {doc.error && <div className="text-xs text-red-500 mt-0.5">Error: {doc.error}</div>}
                       </div>
                     </div>
                   </td>
-                  <td className="px-5 py-4 text-center"><StatusBadge status={doc.status} /></td>
-                  <td className="px-5 py-4 text-center">
+                  <td className="px-5 py-2.5 text-center"><StatusBadge status={doc.status} /></td>
+                  <td className="px-5 py-2.5 text-center">
                     <span className="text-sm font-medium text-gray-700 dark:text-slate-300">
                       {doc.chunks > 0 ? doc.chunks.toLocaleString() : "—"}
                     </span>
                   </td>
-                  <td className="px-5 py-4 text-center">
-                    <span className="text-sm text-gray-500 dark:text-slate-400">{doc.size || "—"}</span>
-                  </td>
-                  <td className="px-5 py-4 text-center">
-                    <span className="text-xs text-gray-400">{doc.uploaded || "—"}</span>
-                  </td>
-                  <td className="px-5 py-4 text-center">
-                    <div className="flex items-center justify-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                  <td className="px-5 py-2.5 text-center">
+                    <div className="flex items-center justify-center gap-1.5 opacity-60 group-hover:opacity-100 transition-opacity">
                       {doc.status === "failed" && (
                         <button onClick={() => retryDoc(doc)} title="Remove failed entry"
-                          className="text-amber-500 hover:text-amber-700 transition-colors">
+                          className="p-1.5 rounded-lg text-amber-500 hover:text-amber-700 hover:bg-amber-50 dark:hover:bg-amber-500/10 transition-colors">
                           <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
                             <polyline points="1 4 1 10 7 10"/>
                             <path d="M3.51 15a9 9 0 102.13-9.36L1 10"/>
@@ -459,7 +449,7 @@ function ManagementTab({ user }: { user: { role: string } | null }) {
                       )}
                       {canUpload && doc.status !== "processing" && (
                         <button onClick={() => deleteDoc(doc)} title="Delete document"
-                          className="text-gray-400 hover:text-red-600 transition-colors">
+                          className="p-1.5 rounded-lg text-gray-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-500/10 transition-colors">
                           <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
                             <polyline points="3 6 5 6 21 6"/>
                             <path d="M19 6l-1 14H6L5 6m5 0V4h4v2"/>
@@ -488,100 +478,90 @@ function ManagementTab({ user }: { user: { role: string } | null }) {
 
       {/* ── Knowledge Base (data/ folder) ──────────────────────────────────── */}
       <div>
-        <div className="flex items-center justify-between mb-3">
-          <div>
-            <h2 className="text-sm font-semibold text-gray-900 dark:text-slate-100">Knowledge Base</h2>
-            <p className="text-xs text-gray-400 mt-0.5">
-              Pre-indexed spec files · {libSummary.total_files.toLocaleString()} files · {libSummary.total_chunks.toLocaleString()} chunks · read-only
-            </p>
-          </div>
-          <div className="relative">
-            <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400"
-              fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
-              <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
-            </svg>
-            <input value={libSearch} onChange={e => setLibSearch(e.target.value)}
-              placeholder="Search specs…"
-              className="border border-gray-200 dark:border-slate-700 rounded-xl pl-8 pr-3 py-1.5 text-xs text-gray-700 dark:text-slate-300 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-red-500 bg-white dark:bg-slate-800 w-44" />
-          </div>
+        <div className="flex items-baseline justify-between mb-3">
+          <h2 className="text-sm font-semibold text-gray-900 dark:text-slate-100">Knowledge Base</h2>
+          <p className="text-xs text-gray-400">
+            {libSummary.total_files.toLocaleString()} files · {libSummary.total_chunks.toLocaleString()} chunks · pre-indexed, read-only
+          </p>
         </div>
 
         {loadingLib ? (
-          <div className="bg-white dark:bg-slate-900 rounded-2xl border border-gray-200 dark:border-slate-700 shadow-sm p-5 space-y-3">
-            {[88, 70, 80].map((w, i) => (
-              <div key={i} className="flex items-center gap-4">
-                <div className="skeleton h-8 w-8 rounded-lg flex-shrink-0" />
-                <div className="skeleton h-3" style={{ width: `${w}%` }} />
-              </div>
-            ))}
+          <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
+            {[0, 1, 2].map(i => <div key={i} className="skeleton h-16 rounded-xl" />)}
+          </div>
+        ) : q ? (
+          /* Searching → flat results across every folder, no clicking around */
+          <div className="bg-white dark:bg-slate-900 rounded-2xl border border-gray-200 dark:border-slate-700 shadow-sm overflow-hidden">
+            <div className="px-4 py-2.5 border-b border-gray-100 dark:border-slate-800 text-xs text-gray-400">
+              {libMatches.length} spec{libMatches.length === 1 ? "" : "s"} matching “{search.trim()}”
+            </div>
+            <div className="divide-y divide-gray-50 dark:divide-slate-800 max-h-80 overflow-y-auto">
+              {libMatches.map(doc => (
+                <div key={doc.file} className="flex items-center gap-3 px-4 py-2 hover:bg-gray-50 dark:hover:bg-slate-800/60 transition-colors">
+                  <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-blue-50 dark:bg-blue-500/10 text-blue-700 dark:text-blue-400 border border-blue-200 dark:border-blue-500/30 flex-shrink-0">{doc.group}</span>
+                  <div className="min-w-0 flex-1">
+                    <div className="text-sm font-medium text-gray-800 dark:text-slate-200 truncate">{doc.name}</div>
+                    <div className="text-[11px] text-gray-400 font-mono truncate">{doc.file}</div>
+                  </div>
+                  <span className="text-xs text-gray-400 flex-shrink-0">{doc.chunks.toLocaleString()} chunks</span>
+                </div>
+              ))}
+              {libMatches.length === 0 && (
+                <div className="py-8 text-center text-sm text-gray-400">No specs match — try a TMF number or a keyword like “order”.</div>
+              )}
+            </div>
           </div>
         ) : (
-          <div className="space-y-2">
-            {filteredLibGroups.map(group => (
-              <div key={group.id} className="bg-white dark:bg-slate-900 rounded-2xl border border-gray-200 dark:border-slate-700 shadow-sm overflow-hidden">
-                <button
-                  onClick={() => toggleLib(group.id)}
-                  className="w-full flex items-center justify-between px-5 py-3.5 hover:bg-gray-50 dark:hover:bg-slate-800 transition-colors"
-                >
-                  <div className="flex items-center gap-3 min-w-0">
-                    <div className="w-7 h-7 bg-blue-50 border border-blue-100 rounded-lg flex items-center justify-center flex-shrink-0">
-                      <svg className="w-3.5 h-3.5 text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.5">
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/>
-                      </svg>
-                    </div>
-                    <div className="text-left min-w-0">
-                      <span className="text-sm font-semibold text-gray-800 dark:text-slate-200">{group.name}</span>
-                      <span className="text-xs text-gray-400 ml-2">{group.files} files · {group.chunks.toLocaleString()} chunks</span>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-2 flex-shrink-0 ml-3">
-                    <span className="text-xs font-semibold bg-green-100 text-green-700 px-2 py-0.5 rounded-full">Indexed</span>
-                    <svg className={`w-4 h-4 text-gray-400 transition-transform ${libExpanded.has(group.id) ? "rotate-180" : ""}`}
-                      fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7"/>
+          /* Browsing → compact folder grid; click a folder to see its files below */
+          <>
+            <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
+              {libGroups.map(group => {
+                const active = activeLib === group.id;
+                return (
+                  <button key={group.id} onClick={() => setActiveLib(active ? null : group.id)}
+                    className={`flex items-center gap-2.5 px-3.5 py-3 rounded-xl border text-left transition-all ${
+                      active
+                        ? "bg-red-50 dark:bg-red-500/10 border-red-300 dark:border-red-500/40 shadow-sm"
+                        : "bg-white dark:bg-slate-900 border-gray-200 dark:border-slate-700 hover:border-red-200 dark:hover:border-slate-500 hover:shadow-sm"
+                    }`}>
+                    <svg className={`w-5 h-5 flex-shrink-0 ${active ? "text-red-500" : "text-amber-500"}`} fill="currentColor" viewBox="0 0 24 24">
+                      <path d="M10 4H4a2 2 0 00-2 2v12a2 2 0 002 2h16a2 2 0 002-2V8a2 2 0 00-2-2h-8l-2-2z"/>
                     </svg>
-                  </div>
-                </button>
+                    <div className="min-w-0">
+                      <div className={`text-sm font-semibold truncate ${active ? "text-red-700 dark:text-red-400" : "text-gray-800 dark:text-slate-200"}`}>{group.name}</div>
+                      <div className="text-[11px] text-gray-400">{group.files} files · {group.chunks.toLocaleString()} chunks</div>
+                    </div>
+                    <svg className={`w-3.5 h-3.5 ml-auto flex-shrink-0 text-gray-300 dark:text-slate-600 transition-transform ${active ? "rotate-90 text-red-400" : ""}`}
+                      fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><polyline points="9 18 15 12 9 6"/></svg>
+                  </button>
+                );
+              })}
+            </div>
 
-                {libExpanded.has(group.id) && (
-                  <div className="border-t border-gray-100 dark:border-slate-800">
-                    <table className="w-full">
-                      <thead>
-                        <tr className="bg-gray-50 dark:bg-slate-800 border-b border-gray-100 dark:border-slate-800">
-                          <th className="text-left text-[11px] font-bold text-gray-400 uppercase tracking-widest px-5 py-2">Document</th>
-                          <th className="text-center text-[11px] font-bold text-gray-400 uppercase tracking-widest px-4 py-2">Chunks</th>
-                          <th className="text-center text-[11px] font-bold text-gray-400 uppercase tracking-widest px-4 py-2">Status</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-gray-50">
-                        {group.documents.map(doc => (
-                          <tr key={doc.file} className="hover:bg-gray-50 dark:hover:bg-slate-800/60 transition-colors">
-                            <td className="px-5 py-3">
-                              <div className="text-sm font-medium text-gray-800 dark:text-slate-200 truncate max-w-sm">{doc.name}</div>
-                              <div className="text-xs text-gray-400 font-mono truncate">{doc.file}</div>
-                            </td>
-                            <td className="px-4 py-3 text-center">
-                              <span className="text-sm font-medium text-gray-600 dark:text-slate-400">{doc.chunks.toLocaleString()}</span>
-                            </td>
-                            <td className="px-4 py-3 text-center">
-                              <span className="inline-flex items-center gap-1.5 text-xs font-semibold px-2 py-0.5 rounded-full bg-green-100 text-green-700">
-                                <span className="w-1.5 h-1.5 rounded-full bg-green-500" />Indexed
-                              </span>
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
+            {activeLib && (() => {
+              const group = libGroups.find(g => g.id === activeLib);
+              if (!group) return null;
+              return (
+                <div className="mt-2 bg-white dark:bg-slate-900 rounded-2xl border border-gray-200 dark:border-slate-700 shadow-sm overflow-hidden">
+                  <div className="flex items-center justify-between px-4 py-2.5 border-b border-gray-100 dark:border-slate-800">
+                    <span className="text-xs font-semibold text-gray-500 dark:text-slate-400 uppercase tracking-wider">{group.name} — {group.files} files</span>
+                    <button onClick={() => setActiveLib(null)} className="text-xs text-gray-400 hover:text-gray-600 dark:hover:text-slate-300">Close</button>
                   </div>
-                )}
-              </div>
-            ))}
-            {filteredLibGroups.length === 0 && (
-              <div className="bg-white dark:bg-slate-900 rounded-2xl border border-gray-200 dark:border-slate-700 shadow-sm py-10 text-center text-sm text-gray-400">
-                No spec files match your search.
-              </div>
-            )}
-          </div>
+                  <div className="divide-y divide-gray-50 dark:divide-slate-800 max-h-80 overflow-y-auto">
+                    {group.documents.map(doc => (
+                      <div key={doc.file} className="flex items-center gap-3 px-4 py-2 hover:bg-gray-50 dark:hover:bg-slate-800/60 transition-colors">
+                        <div className="min-w-0 flex-1">
+                          <div className="text-sm font-medium text-gray-800 dark:text-slate-200 truncate">{doc.name}</div>
+                          <div className="text-[11px] text-gray-400 font-mono truncate">{doc.file}</div>
+                        </div>
+                        <span className="text-xs text-gray-400 flex-shrink-0">{doc.chunks.toLocaleString()} chunks</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              );
+            })()}
+          </>
         )}
       </div>
     </div>
