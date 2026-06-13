@@ -19,9 +19,21 @@ SynaptDI is a Retrieval-Augmented Generation (RAG) system over the TM Forum Open
 
 1. **Ingest** — `ingest.py` clones the full TM Forum Open API repo set (~88 `TMFxxx` API repos + ODA Canvas + design-guideline/data-model docs), parses each OpenAPI spec into natural-language text, chunks it, embeds it with `nomic-embed-text`, and stores it in ChromaDB.
 2. **Retrieve** — on each question the backend detects which spec(s) you mean — **by number (`TMF641`) or by name (`Product Catalog Management API`)** — and pulls that spec's own chunks directly, so the right spec is always in context. It then fills remaining slots with general semantic matches and any relevant uploaded documents.
-3. **Generate** — the retrieved chunks + your question go to a local LLM (Llama 3.1 8B via Ollama), which writes a grounded, cited answer. If nothing relevant is found, it says so instead of hallucinating.
+3. **Generate** — the retrieved chunks + your question go to a local LLM (Llama 3.1 8B via Ollama in **Deep mode**; a 3B model powers **⚡ Fast mode**), which writes a grounded answer with inline `[n]` citations. If nothing relevant is found — or the question is off-domain — it says so instead of hallucinating.
 
-Current knowledge base: **~9,300 chunks across 74 TM Forum specs.**
+Current knowledge base: **~10,800 chunks across 74 TM Forum specs.**
+
+---
+
+## What's inside
+
+- **Cited answers** — inline `[n]` citations linking to the exact spec chunk + GitHub source, plus suggested follow-up questions and a live "searching TMF…" trace while it thinks.
+- **Deep / ⚡ Fast modes** — the full 8B for accuracy or a 3B for instant lookups; repeated questions are cached and return instantly.
+- **TMF630 Conformance checker** — upload your own OpenAPI spec and get a scored report of where it deviates from TM Forum design rules.
+- **Add knowledge from the UI** — upload files (PDF, DOCX, XLSX, PPTX, CSV, TXT, MD, JSON, YAML), point at a Git repo, or paste a web link.
+- **Admin** — live branding (logo + colour-wheel theme), users & RBAC, and an adoption dashboard (active users, daily volume, answer rate, knowledge gaps).
+- **Dark mode**, a **⌘K command palette**, and a **VS Code extension** (`vscode-extension/`).
+- **Self-hostable** — one-command Docker deploy (**[DEPLOY.md](DEPLOY.md)**) and an automated eval harness (`backend/eval.py`).
 
 ---
 
@@ -39,6 +51,7 @@ Pull the models once:
 ```bash
 ollama pull llama3.1:8b
 ollama pull nomic-embed-text
+ollama pull llama3.2          # optional — powers ⚡ Fast mode (smaller, much quicker on CPU)
 ```
 
 > **On the model:** the product spec references "Llama 3.3 8B", but Llama 3.3 ships only in 70B — the genuine latest-generation 8B is **Llama 3.1 8B**, which is what SynaptDI uses. To use a different model, set the `LLM_MODEL` env var (see [Configuration](#configuration)).
@@ -111,14 +124,14 @@ Authentication is real (hashed passwords + sessions). Seeded demo accounts:
 |---|---|---|
 | `admin@synaptdi.com` | `admin123` | admin (can add knowledge, manage users) |
 | `analyst@synaptdi.com` | `analyst123` | analyst |
-| `tom@synaptdi.com` | `viewer123` | viewer |
+| `lisa@synaptdi.com` | `viewer123` | viewer |
 
 Change these in production (passwords are hashed in `backend/storage/users.json`, which is git-ignored).
 
 ### Adding knowledge (no scripts needed)
 
 As an **admin/analyst**, go to **Documents** and add sources from the UI:
-- **Upload a file** (PDF/TXT/MD/JSON/YAML)
+- **Upload a file** (PDF, DOCX, XLSX, PPTX, CSV, TXT, MD, JSON, YAML)
 - **Git repo URL** — clones & indexes any GitHub / TM Forum / MEF repo's OpenAPI specs + docs
 - **Web link** — fetches a page or PDF and indexes its text
 
@@ -134,10 +147,14 @@ The backend reads these environment variables (all optional, with sensible defau
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `LLM_MODEL` | `llama3.1:8b` | Ollama model used for answers |
+| `LLM_MODEL` | `llama3.1:8b` | Ollama model for **Deep**-mode answers |
+| `FAST_MODEL` | `llama3.2:latest` | Model for **⚡ Fast** mode |
 | `EMBED_MODEL` | `nomic-embed-text` | Ollama embedding model |
 | `OLLAMA_URL` | `http://localhost:11434` | Ollama endpoint |
 | `CHROMA_PATH` | `./chroma_db` | Vector DB location |
+| `LLM_CONCURRENCY` | `1` | Parallel generations (raise only with a GPU) |
+| `WARM_MODELS` | `1` | Pre-load the LLM at startup so the first query isn't cold (`0` to disable) |
+| `VECTOR_BACKEND` | `chroma` | Vector-store backend (interface allows future Milvus/Qdrant/pgvector) |
 
 The frontend reads `NEXT_PUBLIC_API_URL` (set in `frontend/.env.local`, default `http://localhost:8000`).
 
@@ -172,15 +189,20 @@ LLM_MODEL=llama3.2 uvicorn main:app --port 8000
 
 ```
 SynaptDI/
-├── start.sh                ← starts Ollama check, ingest (if needed), backend + frontend
+├── start.sh / start.bat    ← Ollama check, ingest (if needed), backend + frontend
+├── docker-compose.yml      ← one-command deploy (see DEPLOY.md)
 ├── backend/
 │   ├── main.py             ← FastAPI app + spec-aware RAG query engine
 │   ├── ingest.py           ← clone + parse + embed + index the TM Forum corpus
-│   ├── requirements.txt
+│   ├── vectorstore.py      ← backend-agnostic vector store (Chroma today)
+│   ├── conformance.py      ← TMF630 conformance rule engine
+│   ├── eval.py + evals/    ← automated quality harness + golden set
+│   ├── requirements.txt · Dockerfile
 │   ├── chroma_db/          ← vector index   (generated; gitignored)
 │   └── data/               ← cloned spec repos (generated; gitignored)
-└── frontend/
-    └── app/                ← Next.js chat UI, Documents, Admin, Settings
+├── frontend/
+│   └── app/                ← Next.js: Chat, Documents, Conformance, Admin, Settings
+└── vscode-extension/       ← "Ask SynaptDI" VS Code extension
 ```
 
 ---
@@ -193,7 +215,7 @@ SynaptDI/
 ```
 Response: `{ answer, sources[], latency_ms, chunks_retrieved }`
 
-Other endpoints: **`GET /health`** (backend + Ollama status), **`GET /stats`** (chunks indexed), **`POST /documents/upload`** (add your own docs). Full interactive docs at `http://localhost:8000/docs`.
+Key endpoints: **`POST /query/stream`** (token streaming) · **`POST /conformance`** (TMF630 spec audit) · **`GET /coverage`** (indexed specs by domain) · **`POST /followups`** · **`GET /health`** · **`GET /stats`** · **`GET /analytics`** (admin). Full interactive docs at `http://localhost:8000/docs`.
 
 ---
 
@@ -205,7 +227,7 @@ Other endpoints: **`GET /health`** (backend + Ollama status), **`GET /stats`** (
 | `Address already in use` | App is already running — open http://localhost:3000 |
 | `503` / "Embedding failed" | Ollama isn't running: `ollama serve &`, then retry |
 | Answer says "not in the knowledge base" for everything | The index didn't build — run `cd backend && python3 ingest.py` with Ollama running |
-| Answers take ~10–25s | Normal for an 8B model on CPU; set `LLM_MODEL=llama3.2` for faster (less precise) responses, or run on Apple Silicon/GPU |
+| Answers are slow / "request timed out" | An 8B model on a CPU-only PC is slow — especially the first (cold) query. Use the **⚡ Fast** toggle in chat, warm the model once with `ollama run llama3.1:8b "hi"`, check `ollama ps` (GPU vs CPU), or run on Apple Silicon / a GPU box. The chat no longer hard-times-out — it keeps waiting as long as tokens are streaming. |
 | Frontend loads but can't reach API | Ensure `frontend/.env.local` has `NEXT_PUBLIC_API_URL=http://localhost:8000` |
 
 ---
