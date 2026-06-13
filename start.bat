@@ -21,7 +21,9 @@ if errorlevel 1 (
 )
 
 REM 2) Backend  (first run builds the index, then starts the API)
-if not exist "backend\chroma_db" (
+REM    Check for the actual index file, not just the folder — a half-built
+REM    chroma_db dir would otherwise be mistaken for a finished index.
+if not exist "backend\chroma_db\chroma.sqlite3" (
   echo [2/3] No index yet - first run will clone + index TM Forum ^(~5-10 min^).
   start "SynaptDI Backend" cmd /k "cd backend && venv\Scripts\activate && python ingest.py && uvicorn main:app --host 0.0.0.0 --port 8000"
 ) else (
