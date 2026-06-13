@@ -272,12 +272,31 @@ def optional_user_email(authorization: Optional[str]) -> str:
 app = FastAPI(title="SynaptDI API", version="2.0.0")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
+def _warm_models():
+    """Load the embed + LLM models into Ollama at boot so the FIRST user query
+    doesn't pay the cold-start cost (which on a CPU-only box can exceed the
+    client timeout). Best-effort, runs off-thread, never blocks startup."""
+    try:
+        embed("warmup")
+    except Exception:
+        pass
+    try:
+        requests.post(f"{OLLAMA_URL}/api/generate",
+                      json={"model": LLM_MODEL, "prompt": "ok", "stream": False,
+                            "options": {"num_predict": 1}},
+                      timeout=600)
+        print(f"[startup] warmed {LLM_MODEL}", flush=True)
+    except Exception:
+        pass
+
 @app.on_event("startup")
 def startup_init():
     # The collection is opened lazily on the first request and cached as a
     # singleton. ChromaDB's PersistentClient loads the persisted HNSW index on
     # open, so the very first query already sees the full corpus (verified).
     print("[startup] SynaptDI ready — ChromaDB opens on first request", flush=True)
+    if os.getenv("WARM_MODELS", "1") != "0":
+        threading.Thread(target=_warm_models, daemon=True).start()
 
 # ── Vector store ─────────────────────────────────────────────────────────────────
 # Pre-built mapping of "TMF622" → "TMF622-ProductOrdering-v4.0.0.swagger.json"

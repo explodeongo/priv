@@ -333,7 +333,12 @@ export default function Home() {
     setTrace(null); setFollowups([]);
     const controller = new AbortController();
     abortRef.current = controller;
-    const timeout = setTimeout(() => controller.abort(), 180000);
+    // Idle timeout: abort only if the stream goes SILENT this long. It resets on
+    // every chunk, so a slow-but-working answer — or a cold model load on a weak
+    // PC — never gets killed mid-generation; only a truly stuck request fails.
+    const IDLE_MS = 300000;
+    let timeout = setTimeout(() => controller.abort(), IDLE_MS);
+    const bump = () => { clearTimeout(timeout); timeout = setTimeout(() => controller.abort(), IDLE_MS); };
     const history = prior.filter(m => m.content && !m.error)
                          .slice(-6).map(m => ({ role: m.role, content: m.content }));
 
@@ -366,6 +371,7 @@ export default function Home() {
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
+        bump();                                   // data is flowing — reset the idle timer
         buf += decoder.decode(value, { stream: true });
         const lines = buf.split("\n");
         buf = lines.pop() || "";
@@ -393,7 +399,7 @@ export default function Home() {
         setLast({ content: acc ? acc + "\n\n_(stopped)_" : "_(stopped)_" });
         if (acc) save();
       } else if (e.name === "AbortError" || e.name === "TimeoutError") {
-        setLast({ content: "Request timed out. The model may still be loading — try again in 30 seconds.", error: true });
+        setLast({ content: "The model went quiet for too long — on a slower PC it may still be loading. Try **⚡ Fast** mode (next to the scope buttons), or ask again in a moment.", error: true });
       } else {
         setLast({ content: `Could not reach SynaptDI API: ${e.message}. Make sure uvicorn is running on port 8000.`, error: true });
       }
