@@ -38,6 +38,13 @@ LLM_MODEL   = os.getenv("LLM_MODEL",  "llama3.1:8b")   # PRD wants an 8B; 3.3 is
 FAST_MODEL  = os.getenv("FAST_MODEL", "llama3.2:latest")  # 3B — "fast mode" for quick lookups
 # Serialize LLM generations so concurrent users queue instead of thrashing Ollama.
 LLM_CONCURRENCY = int(os.getenv("LLM_CONCURRENCY", "1"))
+# ── Performance knobs (matter a lot on CPU-only machines) ───────────────────────
+NUM_CTX          = int(os.getenv("NUM_CTX", "4096"))          # prompt+gen window
+KEEP_ALIVE       = os.getenv("OLLAMA_KEEP_ALIVE", "30m")      # keep model resident between queries (no cold reload)
+DEEP_NUM_PREDICT = int(os.getenv("DEEP_NUM_PREDICT", "900"))  # Deep-mode max answer tokens
+FAST_NUM_PREDICT = int(os.getenv("FAST_NUM_PREDICT", "500"))  # Fast-mode: shorter answer = quicker
+FAST_TOP_K       = int(os.getenv("FAST_TOP_K", "4"))          # Fast-mode: fewer chunks = faster prompt processing
+NUM_THREAD       = int(os.getenv("OLLAMA_NUM_THREAD", "0"))   # 0 = let Ollama decide; set to physical cores on CPU
 EMBED_MODEL = os.getenv("EMBED_MODEL","nomic-embed-text")
 CHROMA_PATH = os.getenv("CHROMA_PATH","./chroma_db")
 
@@ -283,7 +290,7 @@ def _warm_models():
     try:
         requests.post(f"{OLLAMA_URL}/api/generate",
                       json={"model": LLM_MODEL, "prompt": "ok", "stream": False,
-                            "options": {"num_predict": 1}},
+                            "keep_alive": KEEP_ALIVE, "options": {"num_predict": 1}},
                       timeout=600)
         print(f"[startup] warmed {LLM_MODEL}", flush=True)
     except Exception:
@@ -819,13 +826,21 @@ def build_prompt(question: str, chunks: list[dict], guarded: bool, history=None,
     )
     return f"{sysp}\n\n{_format_history(history)}CONTEXT:\n{ctx}\n\nQUESTION: {question}\n\nANSWER:"
 
-def generate_answer(prompt: str, model: str = "") -> str:
+def _gen_options(num_predict: int) -> dict:
+    """Shared Ollama generation options. temperature 0 for determinism; full context
+    so quality is never reduced; optional CPU thread pinning."""
+    opts = {"temperature": 0.0, "num_predict": num_predict, "num_ctx": NUM_CTX,
+            "stop": ["QUESTION:", "CONTEXT:"]}
+    if NUM_THREAD > 0:
+        opts["num_thread"] = NUM_THREAD
+    return opts
+
+def generate_answer(prompt: str, model: str = "", num_predict: int = DEEP_NUM_PREDICT) -> str:
     with _llm_sem:
         r = requests.post(f"{OLLAMA_URL}/api/generate",
                           json={"model": model or LLM_MODEL, "prompt": prompt, "stream": False,
-                                "options": {"temperature": 0.0, "num_predict": 900,
-                                            "stop": ["QUESTION:", "CONTEXT:"]}},
-                          timeout=300)
+                                "keep_alive": KEEP_ALIVE, "options": _gen_options(num_predict)},
+                          timeout=600)
         r.raise_for_status()
         return r.json()["response"].strip()
 
@@ -1079,16 +1094,15 @@ def build_sources(chunks: list) -> list:
         })
     return sources
 
-def stream_ollama(prompt: str, model: str = ""):
+def stream_ollama(prompt: str, model: str = "", num_predict: int = DEEP_NUM_PREDICT):
     """Yield answer text fragments from Ollama as they are generated.
     Generations are serialized via _llm_sem so concurrent users queue cleanly."""
     _llm_sem.acquire()
     try:
         with requests.post(f"{OLLAMA_URL}/api/generate",
                            json={"model": model or LLM_MODEL, "prompt": prompt, "stream": True,
-                                 "options": {"temperature": 0.0, "num_predict": 900,
-                                             "stop": ["QUESTION:", "CONTEXT:"]}},
-                           stream=True, timeout=300) as r:
+                                 "keep_alive": KEEP_ALIVE, "options": _gen_options(num_predict)},
+                           stream=True, timeout=600) as r:
             r.raise_for_status()
             for line in r.iter_lines():
                 if not line:
@@ -1116,6 +1130,9 @@ def query(req: QueryRequest, authorization: Optional[str] = Header(None)):
 
     mode  = "fast" if (req.mode or "").lower() == "fast" else "deep"
     model = FAST_MODEL if mode == "fast" else LLM_MODEL
+    npred = FAST_NUM_PREDICT if mode == "fast" else DEEP_NUM_PREDICT
+    if mode == "fast":
+        top_k = min(top_k, FAST_TOP_K)   # fewer chunks → smaller prompt → faster on CPU
     if not req.history:                       # follow-ups depend on history — never cache those
         hit = cache_get(req.question, scope, mode)
         if hit:
@@ -1142,7 +1159,7 @@ def query(req: QueryRequest, authorization: Optional[str] = Header(None)):
         return QueryResponse(answer=empty, sources=[],
                              latency_ms=int((time.time()-start)*1000), chunks_retrieved=0)
 
-    try:    answer = generate_answer(build_prompt(req.question, chunks, guarded=not confident, history=req.history, extra=extra), model)
+    try:    answer = generate_answer(build_prompt(req.question, chunks, guarded=not confident, history=req.history, extra=extra), model, npred)
     except Exception as e: raise HTTPException(503, f"Generation failed: {e}")
 
     # If the LLM used its exact "no info" escape hatch, return no sources.
@@ -1172,6 +1189,9 @@ def query_stream(req: QueryRequest, authorization: Optional[str] = Header(None))
         scope = "all"
     mode  = "fast" if (req.mode or "").lower() == "fast" else "deep"
     model = FAST_MODEL if mode == "fast" else LLM_MODEL
+    npred = FAST_NUM_PREDICT if mode == "fast" else DEEP_NUM_PREDICT
+    if mode == "fast":
+        top_k = min(top_k, FAST_TOP_K)   # fewer chunks → smaller prompt → faster on CPU
     if not req.history:
         hit = cache_get(req.question, scope, mode)
         if hit:
@@ -1208,7 +1228,7 @@ def query_stream(req: QueryRequest, authorization: Optional[str] = Header(None))
                           "specs":   _unique_specs(chunks)[:6]}) + "\n"
         acc = ""
         try:
-            for frag in stream_ollama(build_prompt(req.question, chunks, guarded=not confident, history=req.history, extra=extra), model):
+            for frag in stream_ollama(build_prompt(req.question, chunks, guarded=not confident, history=req.history, extra=extra), model, npred):
                 acc += frag
                 yield json.dumps({"type": "token", "text": frag}) + "\n"
         except Exception as e:

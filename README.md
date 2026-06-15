@@ -154,6 +154,10 @@ The backend reads these environment variables (all optional, with sensible defau
 | `CHROMA_PATH` | `./chroma_db` | Vector DB location |
 | `LLM_CONCURRENCY` | `1` | Parallel generations (raise only with a GPU) |
 | `WARM_MODELS` | `1` | Pre-load the LLM at startup so the first query isn't cold (`0` to disable) |
+| `OLLAMA_KEEP_ALIVE` | `30m` | How long Ollama keeps the model in RAM between queries (avoids cold reloads) |
+| `NUM_CTX` | `4096` | Prompt + generation context window |
+| `FAST_TOP_K` · `FAST_NUM_PREDICT` | `4` · `500` | Fast mode: fewer chunks + shorter answers |
+| `DEEP_NUM_PREDICT` | `900` | Deep mode: max answer length |
 | `VECTOR_BACKEND` | `chroma` | Vector-store backend (interface allows future Milvus/Qdrant/pgvector) |
 
 The frontend reads `NEXT_PUBLIC_API_URL` (set in `frontend/.env.local`, default `http://localhost:8000`).
@@ -236,3 +240,6 @@ Key endpoints: **`POST /query/stream`** (token streaming) · **`POST /conformanc
 
 ## Deploy for your team
 One command on a shared server — see **[DEPLOY.md](DEPLOY.md)** (Docker Compose: backend + frontend + Ollama, one URL for everyone).
+
+## Performance
+Answers feel slow on a CPU-only laptop? **[PERFORMANCE.md](PERFORMANCE.md)** covers how to speed up the *same* full-quality answer — flash-attention, Intel **IPEX-LLM** (uses the Iris Xe iGPU), and a GPU host (~2–5 s for the whole team).
