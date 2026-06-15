@@ -451,12 +451,27 @@ def save_uploads(docs: list[dict]):
     UPLOADS_FILE.write_text(json.dumps(docs, indent=2))
 
 def upsert_upload(entry: dict):
+    prev = next((d for d in load_uploads() if d.get("file") == entry["file"]), None)
+    if prev and entry.get("folder") is None and prev.get("folder"):
+        entry["folder"] = prev["folder"]     # keep the user's folder across re-index/refresh
     docs = [d for d in load_uploads() if d.get("file") != entry["file"]]
     docs.insert(0, entry)
     save_uploads(docs)
 
 def remove_upload_record(file_name: str):
     save_uploads([d for d in load_uploads() if d.get("file") != file_name])
+
+# ── User-created folders (organize uploaded knowledge sources) ───────────────────
+FOLDERS_FILE = STORAGE_DIR / "folders.json"
+
+def load_folders() -> list:
+    if FOLDERS_FILE.exists():
+        try:    return json.loads(FOLDERS_FILE.read_text())
+        except: pass
+    return []
+
+def save_folders(names: list):
+    FOLDERS_FILE.write_text(json.dumps(sorted({n.strip() for n in names if n and n.strip()}), indent=2))
 
 # ── Background ingestion ───────────────────────────────────────────────────────
 def ingest_file_bg(content: bytes, file_name: str, source_name: str, size_mb: float):
@@ -1403,7 +1418,78 @@ def list_documents():
             d["chunks"] = live.get("chunks", d.get("chunks", 0))
         # Auto-organize: tag each source with a domain bucket (TM Forum / ODA / MEF / …)
         d["category"] = d.get("category") or _categorize(d.get("name"), d.get("url"), d.get("file"))
+        d["folder"]   = d.get("folder") or ""     # user-assigned folder ("" = Uncategorized)
     return {"documents": docs}
+
+# ── Folders ──────────────────────────────────────────────────────────────────────
+class FolderReq(BaseModel):
+    name: str
+
+class MoveReq(BaseModel):
+    folder: str = ""
+
+@app.get("/folders")
+def list_folders():
+    docs = load_uploads()
+    counts: dict = {}
+    for d in docs:
+        f = d.get("folder") or ""
+        counts[f] = counts.get(f, 0) + 1
+    return {"folders": [{"name": n, "count": counts.get(n, 0)} for n in load_folders()],
+            "uncategorized": counts.get("", 0)}
+
+@app.post("/folders")
+def create_folder(req: FolderReq, _admin: dict = Depends(require_admin)):
+    name = (req.name or "").strip()
+    if not name:           raise HTTPException(400, "Folder name required")
+    if len(name) > 60:     raise HTTPException(400, "Folder name too long (max 60)")
+    folders = load_folders()
+    if name not in folders:
+        folders.append(name); save_folders(folders)
+    return {"folders": load_folders()}
+
+@app.delete("/folders/{name}")
+def delete_folder(name: str, _admin: dict = Depends(require_admin)):
+    save_folders([f for f in load_folders() if f != name])
+    docs = load_uploads()                  # its documents fall back to Uncategorized (never deleted)
+    for d in docs:
+        if d.get("folder") == name:
+            d["folder"] = ""
+    save_uploads(docs)
+    return {"ok": True, "folders": load_folders()}
+
+@app.post("/documents/{file_name}/folder")
+def move_document(file_name: str, req: MoveReq, _admin: dict = Depends(require_admin)):
+    folder = (req.folder or "").strip()
+    docs, found = load_uploads(), False
+    for d in docs:
+        if d.get("file") == file_name:
+            d["folder"] = folder; found = True
+    if not found:
+        raise HTTPException(404, "Document not found")
+    save_uploads(docs)
+    if folder and folder not in load_folders():
+        save_folders(load_folders() + [folder])
+    return {"ok": True}
+
+@app.post("/folders/{name}/refresh")
+def refresh_folder(name: str, background_tasks: BackgroundTasks, _admin: dict = Depends(require_admin)):
+    """Re-fetch every repo/web source in a folder (folder-level refresh)."""
+    sources = [d for d in load_uploads()
+               if (d.get("folder") or "") == name and d.get("type") in ("repo", "web") and d.get("url")]
+    if not sources:
+        return {"refreshed": 0, "note": "No repo or web sources in this folder."}
+    recs = get_collection().scan()
+    for u in sources:
+        origin = u.get("origin") or u.get("file")
+        ids = [r["id"] for r in recs if r["metadata"].get("origin") == origin]
+        if ids:
+            get_collection().delete(ids=ids)
+        PROCESSING_STATUS[origin] = {"status": "processing", "chunks": 0}
+        background_tasks.add_task(ingest_repo_bg if u["type"] == "repo" else ingest_web_bg,
+                                  u["url"], origin, u.get("name") or origin)
+    cache_clear()
+    return {"refreshed": len(sources)}
 
 @app.post("/documents/upload")
 async def upload_document(background_tasks: BackgroundTasks, file: UploadFile = File(...)):
@@ -1729,26 +1815,55 @@ def get_analytics(_admin: dict = Depends(require_admin)):
     }
 
 @app.post("/admin/refresh-kb")
-def refresh_kb(_admin: dict = Depends(require_admin)):
-    """Re-pull the source repos and rebuild the index. Heavy — best off-peak.
-    Schedule it by cron'ing a call to this endpoint."""
+def refresh_kb(mode: str = "selective", _admin: dict = Depends(require_admin)):
+    """Re-pull the TM Forum source repos and update the index.
+    mode=selective (default): pull upstream + re-embed ONLY changed/removed files — fast.
+    mode=full: drop and rebuild the whole index from scratch."""
+    mode = "full" if (mode or "").lower() == "full" else "selective"
     if PROCESSING_STATUS.get("__kb_refresh__", {}).get("status") == "processing":
         return {"status": "processing"}
     def _run():
         global _spec_map, _spec_names
-        PROCESSING_STATUS["__kb_refresh__"] = {"status": "processing", "chunks": 0}
+        PROCESSING_STATUS["__kb_refresh__"] = {"status": "processing", "mode": mode}
         try:
-            url_map = ingest.download_data()
-            n = ingest.build_index(url_map)
-            with _chroma_lock:                 # force re-open of the rebuilt collection
+            url_map = ingest.download_data(update=True)     # pull upstream changes
+            if mode == "full":
+                n = ingest.build_index(url_map)
+                result = {"chunks": n}
+            else:
+                result = ingest.sync_index(url_map)         # only changed files
+            with _chroma_lock:                 # force re-open of the updated collection
                 reset_store()
                 _spec_map = None; _spec_names = []
             cache_clear()
-            PROCESSING_STATUS["__kb_refresh__"] = {"status": "indexed", "chunks": n}
+            PROCESSING_STATUS["__kb_refresh__"] = {"status": "indexed", "mode": mode, **result}
         except Exception as e:
-            PROCESSING_STATUS["__kb_refresh__"] = {"status": "failed", "chunks": 0, "error": str(e)[:200]}
+            PROCESSING_STATUS["__kb_refresh__"] = {"status": "failed", "error": str(e)[:200]}
     threading.Thread(target=_run, daemon=True).start()
-    return {"status": "processing"}
+    return {"status": "processing", "mode": mode}
+
+class RefreshSourceReq(BaseModel):
+    origin: str
+
+@app.post("/sources/refresh")
+def refresh_source(req: RefreshSourceReq, background_tasks: BackgroundTasks, _admin: dict = Depends(require_admin)):
+    """Re-fetch and re-index a single repo or web source (e.g. after it changed upstream)."""
+    origin = (req.origin or "").strip()
+    u = next((x for x in load_uploads() if (x.get("origin") or x.get("file")) == origin), None)
+    if not u:
+        raise HTTPException(404, "Source not found")
+    typ, url, label = u.get("type"), u.get("url"), u.get("name") or origin
+    if typ not in ("repo", "web") or not url:
+        raise HTTPException(400, "Only Git-repo and web-link sources can be refreshed. Re-upload a file to update it.")
+    # Drop the source's existing chunks first so removed files don't linger.
+    col = get_collection()
+    old_ids = [r["id"] for r in col.scan() if r["metadata"].get("origin") == origin]
+    if old_ids:
+        col.delete(ids=old_ids)
+    cache_clear()
+    PROCESSING_STATUS[origin] = {"status": "processing", "chunks": 0}
+    background_tasks.add_task(ingest_repo_bg if typ == "repo" else ingest_web_bg, url, origin, label)
+    return {"origin": origin, "status": "processing"}
 
 @app.get("/admin/refresh-kb/status")
 def refresh_kb_status(_admin: dict = Depends(require_admin)):

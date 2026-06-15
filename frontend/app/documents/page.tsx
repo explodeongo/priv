@@ -44,6 +44,7 @@ interface Doc {
   type?:    "file" | "repo" | "web";
   url?:     string;
   category?: string;
+  folder?:   string;
 }
 
 // ── Shared ─────────────────────────────────────────────────────────────────────
@@ -92,6 +93,7 @@ function ManagementTab({ user }: { user: { role: string } | null }) {
   const [libSummary, setLibSummary]   = useState({ total_files: 0, total_chunks: 0 });
   const [activeLib, setActiveLib]     = useState<string | null>(null);
   const [loadingLib, setLoadingLib]   = useState(true);
+  const [folders, setFolders]         = useState<{ name: string; count: number }[]>([]);
 
   const canUpload = user?.role === "admin" || user?.role === "analyst";
 
@@ -128,6 +130,7 @@ function ManagementTab({ user }: { user: { role: string } | null }) {
       if (!r.ok) return;
       const data = await r.json();
       setDocs(data.documents ?? []);
+      try { const fr = await fetch(`${API}/folders`); if (fr.ok) setFolders((await fr.json()).folders || []); } catch {}
     } catch {}
   }, []);
 
@@ -228,22 +231,87 @@ function ManagementTab({ user }: { user: { role: string } | null }) {
     }
   };
 
+  // ── Refresh a single repo/web source ───────────────────────────────────────
+  const refreshSource = async (doc: Doc) => {
+    setDocs(prev => prev.map(d => d.file === doc.file ? { ...d, status: "processing" } : d));
+    toast(`Refreshing "${doc.name}" from source…`, "info");
+    try {
+      const t = typeof window !== "undefined" ? localStorage.getItem("synaptdi_token") : null;
+      const r = await fetch(`${API}/sources/refresh`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...(t ? { Authorization: `Bearer ${t}` } : {}) },
+        body: JSON.stringify({ origin: doc.file }),
+      });
+      if (!r.ok) { const d = await r.json().catch(() => ({})); throw new Error(d.detail || "Refresh failed"); }
+      fetchDocs();   // background polling picks up the new status + chunk count
+    } catch (e: any) {
+      toast(e.message || "Failed to refresh source", "error");
+      fetchDocs();
+    }
+  };
+
+  // ── Folder management ───────────────────────────────────────────────────────
+  const authHdr = () => {
+    const t = typeof window !== "undefined" ? localStorage.getItem("synaptdi_token") : null;
+    return { "Content-Type": "application/json", ...(t ? { Authorization: `Bearer ${t}` } : {}) };
+  };
+  const createFolder = async () => {
+    const name = (prompt("New folder name:") || "").trim();
+    if (!name) return;
+    try {
+      const r = await fetch(`${API}/folders`, { method: "POST", headers: authHdr(), body: JSON.stringify({ name }) });
+      if (!r.ok) throw new Error();
+      toast(`Folder "${name}" created`, "success"); fetchDocs();
+    } catch { toast("Failed to create folder (admin only)", "error"); }
+  };
+  const moveDoc = async (doc: Doc, folder: string) => {
+    setDocs(prev => prev.map(d => d.file === doc.file ? { ...d, folder } : d));
+    try {
+      const r = await fetch(`${API}/documents/${encodeURIComponent(doc.file)}/folder`,
+        { method: "POST", headers: authHdr(), body: JSON.stringify({ folder }) });
+      if (!r.ok) throw new Error();
+      fetchDocs();
+    } catch { toast("Failed to move (admin only)", "error"); fetchDocs(); }
+  };
+  const deleteFolder = async (name: string) => {
+    if (!confirm(`Delete folder "${name}"? Its documents move to Uncategorized — they are not deleted.`)) return;
+    try {
+      const r = await fetch(`${API}/folders/${encodeURIComponent(name)}`, { method: "DELETE", headers: authHdr() });
+      if (!r.ok) throw new Error();
+      toast(`Folder "${name}" deleted`, "info"); fetchDocs();
+    } catch { toast("Failed to delete folder", "error"); }
+  };
+  const refreshFolder = async (name: string) => {
+    toast(`Refreshing sources in "${name}"…`, "info");
+    try {
+      const r = await fetch(`${API}/folders/${encodeURIComponent(name)}/refresh`, { method: "POST", headers: authHdr() });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error();
+      toast(d.refreshed ? `Refreshing ${d.refreshed} source(s)…` : (d.note || "Nothing to refresh here"), "info");
+      fetchDocs();
+    } catch { toast("Failed to refresh folder", "error"); }
+  };
+
   const visible = docs.filter(d =>
     (filter === "all" || d.status === filter) &&
     d.name.toLowerCase().includes(search.toLowerCase())
   );
 
-  // Group sources into collapsible domain folders (TM Forum / ODA / MEF / …)
+  // Group sources into the user's folders (Uncategorized last). Empty folders still
+  // show so you can move documents into them.
   const [collapsedCats, setCollapsedCats] = useState<Set<string>>(new Set());
   const toggleCat = (c: string) =>
     setCollapsedCats(s => { const n = new Set(s); n.has(c) ? n.delete(c) : n.add(c); return n; });
-  const CAT_ORDER = ["TM Forum", "ODA", "MEF", "ETSI", "3GPP", "IETF", "Other"];
   const folderGroups = (() => {
-    const m: Record<string, Doc[]> = {};
-    for (const d of visible) { const c = d.category || "Other"; if (!m[c]) m[c] = []; m[c].push(d); }
-    return Object.keys(m)
-      .sort((a, b) => ((CAT_ORDER.indexOf(a) + 1 || 99) - (CAT_ORDER.indexOf(b) + 1 || 99)) || a.localeCompare(b))
-      .map(c => ({ cat: c, docs: m[c] }));
+    const names = new Set<string>(folders.map(f => f.name));
+    for (const d of visible) if (d.folder) names.add(d.folder);
+    const ordered = [...names].sort((a, b) => a.localeCompare(b));
+    const m: Record<string, Doc[]> = { Uncategorized: [] };
+    for (const n of ordered) m[n] = [];
+    for (const d of visible) (m[d.folder || "Uncategorized"] ||= []).push(d);
+    return [...ordered, "Uncategorized"]
+      .filter(k => (m[k]?.length ?? 0) > 0 || k !== "Uncategorized")   // hide Uncategorized only when empty
+      .map(k => ({ cat: k, docs: m[k] || [] }));
   })();
 
   const stats = {
@@ -365,6 +433,13 @@ function ManagementTab({ user }: { user: { role: string } | null }) {
               }`}>{f}</button>
           ))}
         </div>
+        {canUpload && (
+          <button onClick={createFolder}
+            className="flex items-center gap-1.5 text-sm font-medium text-gray-600 dark:text-slate-300 border border-gray-200 dark:border-slate-700 rounded-xl px-3 py-2 hover:bg-gray-50 dark:hover:bg-slate-800 transition-colors">
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path d="M10 4H4a2 2 0 00-2 2v12a2 2 0 002 2h16a2 2 0 002-2V8a2 2 0 00-2-2h-8l-2-2z"/><line x1="12" y1="11" x2="12" y2="17"/><line x1="9" y1="14" x2="15" y2="14"/></svg>
+            New folder
+          </button>
+        )}
       </div>
 
       {/* Table */}
@@ -393,13 +468,27 @@ function ManagementTab({ user }: { user: { role: string } | null }) {
             <tbody className="divide-y divide-gray-50">
               {folderGroups.map(g => (
                 <Fragment key={g.cat}>
-                  <tr className="bg-gray-50 dark:bg-slate-800/60 hover:bg-gray-100 dark:hover:bg-slate-800/60 cursor-pointer select-none" onClick={() => toggleCat(g.cat)}>
+                  <tr className="bg-gray-50 dark:bg-slate-800/60 select-none group/fold">
                     <td colSpan={4} className="px-5 py-2">
-                      <div className="flex items-center gap-2 text-sm font-semibold text-gray-700 dark:text-slate-300">
-                        <svg className={`w-3.5 h-3.5 text-gray-400 transition-transform ${collapsedCats.has(g.cat) ? "" : "rotate-90"}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><polyline points="9 18 15 12 9 6"/></svg>
-                        <svg className="w-4 h-4 text-amber-500" fill="currentColor" viewBox="0 0 24 24"><path d="M10 4H4a2 2 0 00-2 2v12a2 2 0 002 2h16a2 2 0 002-2V8a2 2 0 00-2-2h-8l-2-2z"/></svg>
-                        {g.cat}
-                        <span className="text-xs font-normal text-gray-400">· {g.docs.length} {g.docs.length === 1 ? "source" : "sources"}</span>
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2 text-sm font-semibold text-gray-700 dark:text-slate-300 cursor-pointer" onClick={() => toggleCat(g.cat)}>
+                          <svg className={`w-3.5 h-3.5 text-gray-400 transition-transform ${collapsedCats.has(g.cat) ? "" : "rotate-90"}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><polyline points="9 18 15 12 9 6"/></svg>
+                          <svg className="w-4 h-4 text-amber-500" fill="currentColor" viewBox="0 0 24 24"><path d="M10 4H4a2 2 0 00-2 2v12a2 2 0 002 2h16a2 2 0 002-2V8a2 2 0 00-2-2h-8l-2-2z"/></svg>
+                          {g.cat}
+                          <span className="text-xs font-normal text-gray-400">· {g.docs.length} {g.docs.length === 1 ? "source" : "sources"}</span>
+                        </div>
+                        {canUpload && g.cat !== "Uncategorized" && (
+                          <div className="flex items-center gap-1 opacity-0 group-hover/fold:opacity-100 transition-opacity">
+                            <button onClick={() => refreshFolder(g.cat)} title="Refresh all repo/web sources in this folder"
+                              className="p-1 rounded-lg text-gray-400 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-500/10 transition-colors">
+                              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/></svg>
+                            </button>
+                            <button onClick={() => deleteFolder(g.cat)} title="Delete folder (documents move to Uncategorized)"
+                              className="p-1 rounded-lg text-gray-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-500/10 transition-colors">
+                              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6m5 0V4h4v2"/></svg>
+                            </button>
+                          </div>
+                        )}
                       </div>
                     </td>
                   </tr>
@@ -436,14 +525,32 @@ function ManagementTab({ user }: { user: { role: string } | null }) {
                       {doc.chunks > 0 ? doc.chunks.toLocaleString() : "—"}
                     </span>
                   </td>
-                  <td className="px-5 py-2.5 text-center">
-                    <div className="flex items-center justify-center gap-1.5 opacity-60 group-hover:opacity-100 transition-opacity">
+                  <td className="px-5 py-2.5">
+                    <div className="flex items-center justify-end gap-1.5">
+                      {canUpload && (
+                        <select value={doc.folder || ""} onChange={e => moveDoc(doc, e.target.value)}
+                          title="Move to folder"
+                          className="text-xs border border-gray-200 dark:border-slate-700 rounded-lg bg-white dark:bg-slate-800 text-gray-600 dark:text-slate-300 px-1.5 py-1 max-w-[120px] focus:outline-none focus:ring-1 focus:ring-red-500">
+                          <option value="">Uncategorized</option>
+                          {folders.map(f => <option key={f.name} value={f.name}>{f.name}</option>)}
+                        </select>
+                      )}
+                      <span className="flex items-center gap-1.5 opacity-60 group-hover:opacity-100 transition-opacity">
                       {doc.status === "failed" && (
                         <button onClick={() => retryDoc(doc)} title="Remove failed entry"
                           className="p-1.5 rounded-lg text-amber-500 hover:text-amber-700 hover:bg-amber-50 dark:hover:bg-amber-500/10 transition-colors">
                           <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
                             <polyline points="1 4 1 10 7 10"/>
                             <path d="M3.51 15a9 9 0 102.13-9.36L1 10"/>
+                          </svg>
+                        </button>
+                      )}
+                      {canUpload && (doc.type === "repo" || doc.type === "web") && doc.status !== "processing" && (
+                        <button onClick={() => refreshSource(doc)} title="Re-fetch & re-index this source"
+                          className="p-1.5 rounded-lg text-gray-400 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-500/10 transition-colors">
+                          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                            <polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/>
+                            <path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/>
                           </svg>
                         </button>
                       )}
@@ -456,6 +563,7 @@ function ManagementTab({ user }: { user: { role: string } | null }) {
                           </svg>
                         </button>
                       )}
+                      </span>
                     </div>
                   </td>
                 </tr>
