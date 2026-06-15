@@ -852,6 +852,7 @@ class QueryRequest(BaseModel):
     history:  Optional[list] = None   # [{role, content}] recent turns, for follow-up questions
     standards_filter: Optional[list] = None
     mode:     str           = "deep"  # "deep" = full 8B model · "fast" = small model for quick lookups
+    no_cache: bool          = False   # Regenerate sets this → skip the cache read, force a fresh answer
 
 class Source(BaseModel):
     name: str; file: str; chunk: int; preview: str; url: str = ""; upload: bool = False
@@ -1133,7 +1134,7 @@ def query(req: QueryRequest, authorization: Optional[str] = Header(None)):
     npred = FAST_NUM_PREDICT if mode == "fast" else DEEP_NUM_PREDICT
     if mode == "fast":
         top_k = min(top_k, FAST_TOP_K)   # fewer chunks → smaller prompt → faster on CPU
-    if not req.history:                       # follow-ups depend on history — never cache those
+    if not req.history and not req.no_cache:  # skip cache for follow-ups and Regenerate
         hit = cache_get(req.question, scope, mode)
         if hit:
             _log_query(req.question, True, who)
@@ -1192,7 +1193,7 @@ def query_stream(req: QueryRequest, authorization: Optional[str] = Header(None))
     npred = FAST_NUM_PREDICT if mode == "fast" else DEEP_NUM_PREDICT
     if mode == "fast":
         top_k = min(top_k, FAST_TOP_K)   # fewer chunks → smaller prompt → faster on CPU
-    if not req.history:
+    if not req.history and not req.no_cache:
         hit = cache_get(req.question, scope, mode)
         if hit:
             def cached_gen():

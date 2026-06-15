@@ -317,6 +317,7 @@ export default function Home() {
     try { const l = localStorage.getItem("synaptdi_logo"); if (l) setLogo(l); } catch {}
     fetch(`${API}/coverage`).then(r => r.json()).then(setCoverage).catch(() => {});
     try { if (!localStorage.getItem("synaptdi_welcomed")) setShowWelcome(true); } catch {}
+    try { const m = localStorage.getItem("synaptdi_mode"); if (m === "fast" || m === "deep") setMode(m); } catch {}
   }, []);
 
   const firstLetter = (branding.companyName || "S")[0].toUpperCase();
@@ -327,7 +328,7 @@ export default function Home() {
 
   // Core streaming routine — `prior` is the explicit message history (so it works
   // for both a new question and a regenerate without stale-closure issues).
-  const runStream = useCallback(async (question: string, prior: Message[]) => {
+  const runStream = useCallback(async (question: string, prior: Message[], fresh = false) => {
     setLoading(true);
     stoppedRef.current = false;
     setTrace(null); setFollowups([]);
@@ -360,7 +361,7 @@ export default function Home() {
       const res = await fetch(`${API}/query/stream`, {
         method: "POST",
         headers: authH(true),
-        body: JSON.stringify({ question, top_k: prefs.topK, scope, history, mode }),
+        body: JSON.stringify({ question, top_k: prefs.topK, scope, history, mode, no_cache: fresh }),
         signal: controller.signal,
       });
       if (!res.ok || !res.body) throw new Error(`API error ${res.status}`);
@@ -427,7 +428,7 @@ export default function Home() {
     const q = messages[idx].content;
     const base = messages.slice(0, idx);
     setMessages([...base, { role: "user", content: q }, { role: "assistant", content: "" }]);
-    runStream(q, base);
+    runStream(q, base, true);   // Regenerate → force a fresh answer, skip the cache
   }, [loading, messages, runStream]);
 
   const stop = () => { stoppedRef.current = true; abortRef.current?.abort(); };
@@ -696,7 +697,7 @@ export default function Home() {
               </button>
             ))}
             <span className="flex-1" />
-            <button type="button" onClick={() => setMode(m => (m === "deep" ? "fast" : "deep"))}
+            <button type="button" onClick={() => setMode(m => { const n = m === "deep" ? "fast" : "deep"; try { localStorage.setItem("synaptdi_mode", n); } catch {} return n; })}
               title={mode === "deep" ? "Deep: full 8B model — best quality" : "Fast: small model — quick lookups"}
               className={`text-xs px-2.5 py-1 rounded-full border transition-colors flex items-center gap-1 ${
                 mode === "fast"
