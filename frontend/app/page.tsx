@@ -322,6 +322,20 @@ export default function Home() {
 
   const firstLetter = (branding.companyName || "S")[0].toUpperCase();
 
+  // Deep-link from the document reader: /?ask=<question>&scope=<all|kb|docs>
+  useEffect(() => {
+    try {
+      const p = new URLSearchParams(window.location.search);
+      const ask = p.get("ask");
+      if (!ask) return;
+      setInput(ask);
+      const sc = p.get("scope");
+      if (sc === "kb" || sc === "docs" || sc === "all") setScope(sc);
+      window.history.replaceState({}, "", window.location.pathname);   // don't re-fire on refresh
+      setTimeout(() => { const el = inputRef.current; if (el) { el.focus(); el.setSelectionRange(el.value.length, el.value.length); } }, 80);
+    } catch { /* ignore */ }
+  }, []);
+
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, loading]);

@@ -96,7 +96,7 @@ function ManagementTab({ user }: { user: { role: string } | null }) {
   const [loadingLib, setLoadingLib]   = useState(true);
   const [folders, setFolders]         = useState<{ name: string; count: number }[]>([]);
   const [kbBusy, setKbBusy]           = useState<string | null>(null);   // which KB domain is refreshing ("all" = whole KB)
-  const [preview, setPreview]         = useState<{ file: string; name: string } | null>(null);  // in-app document reader
+  const [preview, setPreview]         = useState<{ file: string; name: string; scope?: "all" | "kb" | "docs" } | null>(null);  // in-app document reader
 
   const canUpload = user?.role === "admin" || user?.role === "analyst";
   const isAdmin   = user?.role === "admin";   // KB refresh pulls upstream → admin-only
@@ -542,7 +542,7 @@ function ManagementTab({ user }: { user: { role: string } | null }) {
                           {(doc.type === "repo" || doc.type === "web") ? (
                             <span className="text-sm font-semibold text-gray-900 dark:text-slate-100 truncate max-w-xs">{doc.name}</span>
                           ) : (
-                            <button onClick={() => setPreview({ file: doc.file, name: doc.name })} title="Open to read"
+                            <button onClick={() => setPreview({ file: doc.file, name: doc.name, scope: "docs" })} title="Open to read"
                               className="text-sm font-semibold text-gray-900 dark:text-slate-100 truncate max-w-xs text-left hover:text-red-600 dark:hover:text-red-400 hover:underline cursor-pointer">{doc.name}</button>
                           )}
                           {doc.type && doc.type !== "file" && (
@@ -585,6 +585,12 @@ function ManagementTab({ user }: { user: { role: string } | null }) {
                         </select>
                       )}
                       <span className="flex items-center gap-1.5 opacity-60 group-hover:opacity-100 transition-opacity">
+                      {(doc.type !== "repo" && doc.type !== "web") && doc.status !== "processing" && (
+                        <button onClick={() => setPreview({ file: doc.file, name: doc.name, scope: "docs" })} title="Preview / read"
+                          className="p-1.5 rounded-lg text-gray-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-500/10 transition-colors">
+                          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /><path strokeLinecap="round" strokeLinejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" /></svg>
+                        </button>
+                      )}
                       {doc.status === "failed" && (
                         <button onClick={() => retryDoc(doc)} title="Remove failed entry"
                           className="p-1.5 rounded-lg text-amber-500 hover:text-amber-700 hover:bg-amber-50 dark:hover:bg-amber-500/10 transition-colors">
@@ -669,7 +675,7 @@ function ManagementTab({ user }: { user: { role: string } | null }) {
             </div>
             <div className="divide-y divide-gray-50 dark:divide-slate-800 max-h-80 overflow-y-auto">
               {libMatches.map(doc => (
-                <button key={doc.file} onClick={() => setPreview({ file: doc.file, name: doc.name })}
+                <button key={doc.file} onClick={() => setPreview({ file: doc.file, name: doc.name, scope: "kb" })}
                   className="w-full text-left flex items-center gap-3 px-4 py-2 hover:bg-gray-50 dark:hover:bg-slate-800/60 transition-colors group/row cursor-pointer">
                   <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-blue-50 dark:bg-blue-500/10 text-blue-700 dark:text-blue-400 border border-blue-200 dark:border-blue-500/30 flex-shrink-0">{doc.group}</span>
                   <div className="min-w-0 flex-1">
@@ -737,7 +743,7 @@ function ManagementTab({ user }: { user: { role: string } | null }) {
                   </div>
                   <div className="divide-y divide-gray-50 dark:divide-slate-800 max-h-80 overflow-y-auto">
                     {group.documents.map(doc => (
-                      <button key={doc.file} onClick={() => setPreview({ file: doc.file, name: doc.name })}
+                      <button key={doc.file} onClick={() => setPreview({ file: doc.file, name: doc.name, scope: "kb" })}
                         className="w-full text-left flex items-center gap-3 px-4 py-2 hover:bg-gray-50 dark:hover:bg-slate-800/60 transition-colors group/row cursor-pointer">
                         <div className="min-w-0 flex-1">
                           <div className="text-sm font-medium text-gray-800 dark:text-slate-200 truncate group-hover/row:text-red-600 dark:group-hover/row:text-red-400">{doc.name}</div>
@@ -755,7 +761,7 @@ function ManagementTab({ user }: { user: { role: string } | null }) {
         )}
       </div>
 
-      {preview && <DocPreview file={preview.file} name={preview.name} onClose={() => setPreview(null)} />}
+      {preview && <DocPreview file={preview.file} name={preview.name} askScope={preview.scope} onClose={() => setPreview(null)} />}
     </div>
   );
 }
