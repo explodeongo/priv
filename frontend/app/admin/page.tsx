@@ -4,6 +4,7 @@ import AppShell from "../components/AppShell";
 import { useAuth } from "../components/AuthProvider";
 import { useToast } from "../components/Toast";
 import { useBranding, Branding } from "../components/BrandingContext";
+import ColorPicker from "../components/ColorPicker";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -313,15 +314,6 @@ function UserManagementTab() {
 // ══════════════════════════════════════════════════════════════════════════════
 // Branding Tab — real backend + live BrandingContext
 // ══════════════════════════════════════════════════════════════════════════════
-const PRESET_COLORS = [
-  { name: "Synapt Red",   hex: "#dc2626" },
-  { name: "Slate Blue",   hex: "#3b82f6" },
-  { name: "Forest Green", hex: "#16a34a" },
-  { name: "Royal Purple", hex: "#7c3aed" },
-  { name: "Amber Gold",   hex: "#d97706" },
-  { name: "Midnight",     hex: "#0f172a" },
-];
-
 function AnalyticsTab() {
   const toast = useToast();
   const [data, setData] = useState<any>(null);
@@ -331,24 +323,42 @@ function AnalyticsTab() {
     fetch(`${API}/analytics`, { headers: authHeaders() }).then(r => (r.ok ? r.json() : null)).then(setData).catch(() => {});
   }, []);
 
-  const refreshKB = async () => {
-    if (!confirm("Re-pull all source repos and rebuild the index? This is heavy — best run off-peak.")) return;
+  const refreshKB = async (mode: "selective" | "full") => {
+    const ok = confirm(mode === "full"
+      ? "Full rebuild re-embeds the ENTIRE knowledge base — slow (minutes). Continue?"
+      : "Pull the latest from TM Forum and re-index only what changed?");
+    if (!ok) return;
     setRefreshing(true);
     try {
-      const r = await fetch(`${API}/admin/refresh-kb`, { method: "POST", headers: authHeaders() });
+      const r = await fetch(`${API}/admin/refresh-kb?mode=${mode}`, { method: "POST", headers: authHeaders() });
       if (!r.ok) throw new Error();
-      toast("Knowledge base refresh started — running in the background");
-    } catch { toast("Failed to start refresh", "error"); }
-    finally { setRefreshing(false); }
+      toast(mode === "full" ? "Full rebuild started…" : "Checking TM Forum for updates…", "info");
+      const poll = setInterval(async () => {
+        try {
+          const s = await (await fetch(`${API}/admin/refresh-kb/status`, { headers: authHeaders() })).json();
+          if (s.status === "indexed") {
+            clearInterval(poll); setRefreshing(false);
+            const detail = s.mode === "selective"
+              ? `${s.changed ?? 0} updated · ${s.removed ?? 0} removed · ${s.unchanged ?? 0} unchanged`
+              : `${(s.chunks ?? 0).toLocaleString?.() ?? s.chunks} chunks rebuilt`;
+            toast(`Knowledge base refreshed — ${detail}`, "success");
+          } else if (s.status === "failed") {
+            clearInterval(poll); setRefreshing(false);
+            toast("Refresh failed: " + (s.error || "unknown"), "error");
+          }
+        } catch {}
+      }, 3000);
+      setTimeout(() => clearInterval(poll), 20 * 60 * 1000);
+    } catch { toast("Failed to start refresh", "error"); setRefreshing(false); }
   };
 
   if (!data) return <div className="text-sm text-gray-400 py-12 text-center">Loading analytics…</div>;
   const fb = data.feedback || { up: 0, down: 0 };
   const rate = data.total_queries ? Math.round((100 * data.answered) / data.total_queries) : 0;
-  const Stat = ({ label, val, sub }: { label: string; val: any; sub?: string }) => (
+  const Stat = ({ label, val, sub }: { label: React.ReactNode; val: any; sub?: string }) => (
     <div className="bg-white dark:bg-slate-900 rounded-2xl border border-gray-200 dark:border-slate-700 shadow-sm p-5">
       <div className="text-2xl font-bold text-gray-900 dark:text-slate-100">{val}</div>
-      <div className="text-xs text-gray-500 dark:text-slate-400 mt-1">{label}</div>
+      <div className="text-xs text-gray-500 dark:text-slate-400 mt-1 flex items-center gap-1.5">{label}</div>
       {sub && <div className="text-[11px] text-gray-400 mt-0.5">{sub}</div>}
     </div>
   );
@@ -359,8 +369,8 @@ function AnalyticsTab() {
         <Stat label="Total queries" val={data.total_queries} />
         <Stat label="Answered" val={data.answered} sub={`${rate}% answer rate`} />
         <Stat label="Weekly active users" val={data.wau ?? 0} sub="last 7 days" />
-        <Stat label="👍 Helpful" val={fb.up} />
-        <Stat label="👎 Not helpful" val={fb.down} />
+        <Stat label={<><svg className="w-3.5 h-3.5 text-emerald-500" fill="currentColor" viewBox="0 0 24 24"><path d="M2 21h2V9H2v12zm20-11a2 2 0 00-2-2h-6.31l.95-4.57.03-.32a1.5 1.5 0 00-.44-1.06L13.17 1 6.59 7.59A2 2 0 006 9v10a2 2 0 002 2h9a2 2 0 001.84-1.22l3.02-7.05c.09-.23.14-.47.14-.73v-2z" /></svg>Helpful</>} val={fb.up} />
+        <Stat label={<><svg className="w-3.5 h-3.5 text-red-500" fill="currentColor" viewBox="0 0 24 24"><path d="M22 3h-2v12h2V3zM2 14a2 2 0 002 2h6.31l-.95 4.57-.03.32c0 .41.17.79.44 1.06L10.83 23l6.59-6.59A2 2 0 0018 15V5a2 2 0 00-2-2H7a2 2 0 00-1.84 1.22L2.14 11.27c-.09.23-.14.47-.14.73v2z" /></svg>Not helpful</>} val={fb.down} />
       </div>
 
       {/* Daily activity — the adoption graph */}
@@ -446,7 +456,7 @@ function AnalyticsTab() {
             <p className="text-xs text-gray-400 mt-0.5">Questions we couldn't answer — candidates to ingest</p>
           </div>
           <div className="p-4 space-y-1.5 max-h-72 overflow-y-auto">
-            {(data.gaps || []).length === 0 && <p className="text-xs text-gray-400">No gaps logged 🎉</p>}
+            {(data.gaps || []).length === 0 && <p className="text-xs text-gray-400 inline-flex items-center gap-1">No gaps logged<svg className="w-3.5 h-3.5 text-emerald-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" /></svg></p>}
             {(data.gaps || []).map((g: any, i: number) => (
               <div key={i} className="text-sm text-gray-600 dark:text-slate-400 truncate">• {g.q}</div>
             ))}
@@ -457,12 +467,18 @@ function AnalyticsTab() {
       <div className="bg-white dark:bg-slate-900 rounded-2xl border border-gray-200 dark:border-slate-700 shadow-sm p-5 flex items-center justify-between gap-4">
         <div>
           <h2 className="text-sm font-semibold text-gray-900 dark:text-slate-100">Refresh knowledge base</h2>
-          <p className="text-xs text-gray-400 mt-0.5">Re-pull all source repos and rebuild the index. Heavy — run off-peak (or cron this endpoint).</p>
+          <p className="text-xs text-gray-400 mt-0.5">Pull the latest from TM Forum and re-index <b>only what changed</b>. Full rebuild re-embeds everything (slow).</p>
         </div>
-        <button onClick={refreshKB} disabled={refreshing}
-          className="flex-shrink-0 bg-red-600 hover:bg-red-700 disabled:bg-gray-200 text-white text-sm font-semibold rounded-xl px-5 py-2.5 transition-colors">
-          {refreshing ? "Starting…" : "Refresh now"}
-        </button>
+        <div className="flex items-center gap-2 flex-shrink-0">
+          <button onClick={() => refreshKB("selective")} disabled={refreshing}
+            className="bg-red-600 hover:bg-red-700 disabled:bg-gray-200 text-white text-sm font-semibold rounded-xl px-5 py-2.5 transition-colors">
+            {refreshing ? "Working…" : "Check for updates"}
+          </button>
+          <button onClick={() => refreshKB("full")} disabled={refreshing}
+            className="text-sm font-medium text-gray-500 dark:text-slate-400 hover:text-gray-800 dark:hover:text-slate-200 px-3 py-2.5 disabled:opacity-50">
+            Full rebuild
+          </button>
+        </div>
       </div>
     </div>
   );
@@ -650,24 +666,10 @@ function BrandingTab() {
       <div className="bg-white dark:bg-slate-900 rounded-2xl border border-gray-200 dark:border-slate-700 shadow-sm overflow-hidden">
         <div className="px-6 py-5 border-b border-gray-100 dark:border-slate-800">
           <h2 className="text-sm font-semibold text-gray-900 dark:text-slate-100">Primary Color</h2>
-          <p className="text-xs text-gray-400 mt-0.5">Updates buttons, badges and accents platform-wide in real-time</p>
+          <p className="text-xs text-gray-400 mt-0.5">Drag the wheel, paste a hex, pick from your logo, or use the eyedropper — applies platform-wide on save</p>
         </div>
-        <div className="px-6 py-5 space-y-4">
-          <div className="flex flex-wrap gap-2.5">
-            {PRESET_COLORS.map(p => (
-              <button key={p.hex} onClick={() => setColor(p.hex)} title={p.name}
-                className={`w-9 h-9 rounded-xl transition-all ${color === p.hex ? "ring-2 ring-offset-2 ring-gray-400 scale-110" : "hover:scale-105"}`}
-                style={{ backgroundColor: p.hex }} />
-            ))}
-          </div>
-          <div className="flex items-center gap-3">
-            <label className="text-xs text-gray-500 dark:text-slate-400 font-medium flex-shrink-0">Custom hex</label>
-            <div className="flex items-center gap-2 border border-gray-200 dark:border-slate-700 rounded-xl px-3 py-2 bg-white dark:bg-slate-800">
-              <input type="color" value={color} onChange={e => setColor(e.target.value)}
-                className="w-5 h-5 rounded cursor-pointer border-0 bg-transparent" />
-              <span className="text-sm font-mono text-gray-600 dark:text-slate-400">{color.toUpperCase()}</span>
-            </div>
-          </div>
+        <div className="px-6 py-5">
+          <ColorPicker value={color} onChange={setColor} logo={logo} />
         </div>
       </div>
 

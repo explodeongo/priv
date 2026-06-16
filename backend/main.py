@@ -1101,13 +1101,17 @@ def build_sources(chunks: list) -> list:
     for src in order:
         c = first[src]
         QUERY_HITS[src] = QUERY_HITS.get(src, 0) + 1
+        meta  = c["metadata"]
+        otype = meta.get("origin_type", "")          # "file"/"repo"/"web" for user sources, "" for bundled KB
         sources.append({
             "name":    src,
-            "file":    c["metadata"].get("file", ""),
-            "chunk":   c["metadata"].get("chunk", 0),
+            "file":    meta.get("file", ""),
+            "chunk":   meta.get("chunk", 0),
             "preview": c["document"][:400] + ("..." if len(c["document"]) > 400 else ""),
-            "url":     c["metadata"].get("source_url", ""),
+            "url":     meta.get("source_url", ""),
             "upload":  bool(c.get("upload")),
+            "origin_type": otype,
+            "domain":  "" if otype else _kb_category(meta.get("spec_id", ""), meta.get("file", ""), ""),
         })
     return sources
 

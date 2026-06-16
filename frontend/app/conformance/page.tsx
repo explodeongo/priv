@@ -145,9 +145,12 @@ export default function ConformancePage() {
                 <div className="mt-4 space-y-2.5">
                   {sorted.map(f => {
                     const pass = f.status === "pass";
-                    const tag = pass ? { c: "text-green-600 dark:text-green-400", b: "border-green-200 dark:border-green-500/30", i: "✓" }
-                      : f.severity === "error" ? { c: "text-red-600 dark:text-red-400", b: "border-red-200 dark:border-red-500/30", i: "✕" }
-                      : { c: "text-amber-600 dark:text-amber-400", b: "border-amber-200 dark:border-amber-500/30", i: "!" };
+                    const check = <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="3"><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" /></svg>;
+                    const cross = <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="3"><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>;
+                    const bang  = <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M12 8v5m0 3h.01" /></svg>;
+                    const tag = pass ? { c: "text-green-600 dark:text-green-400", b: "border-green-200 dark:border-green-500/30", i: check }
+                      : f.severity === "error" ? { c: "text-red-600 dark:text-red-400", b: "border-red-200 dark:border-red-500/30", i: cross }
+                      : { c: "text-amber-600 dark:text-amber-400", b: "border-amber-200 dark:border-amber-500/30", i: bang };
                     return (
                       <div key={f.id} className={`bg-white dark:bg-slate-900 rounded-xl border ${tag.b} shadow-sm p-4 flex gap-3`}>
                         <span className={`flex-shrink-0 w-6 h-6 rounded-full border ${tag.b} ${tag.c} flex items-center justify-center text-xs font-bold`}>{tag.i}</span>

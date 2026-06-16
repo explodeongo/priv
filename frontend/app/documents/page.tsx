@@ -317,7 +317,7 @@ function ManagementTab({ user }: { user: { role: string } | null }) {
           const ch = s.changed ?? 0, rm = s.removed ?? 0, added = s.chunks_added ?? s.chunks ?? 0;
           toast(ch || rm || added
             ? `${who} updated — ${ch} changed, ${rm} removed, ${added} chunks re-embedded`
-            : `${who} is already up to date ✓`, "success");
+            : `${who} is already up to date`, "success");
         }
         setKbBusy(null); fetchLibrary(); fetchDocs();
       };
@@ -836,16 +836,19 @@ function PerformanceTab() {
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         {[
           { label: "Total queries", value: totalQueries.toLocaleString(),
-            sub: "across all docs", icon: "💬", bg: "bg-red-50", color: "text-red-600" },
+            sub: "across all docs", bg: "bg-red-50 dark:bg-red-500/10", color: "text-red-600 dark:text-red-400",
+            icon: <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.8"><path strokeLinecap="round" strokeLinejoin="round" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.86 9.86 0 01-4-.8L3 20l1.3-3.9A7.96 7.96 0 013 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" /></svg> },
           { label: "Avg chunks/doc", value: avgChunks.toLocaleString(),
-            sub: "indexed vectors", icon: "📦", bg: "bg-blue-50", color: "text-blue-600" },
+            sub: "indexed vectors", bg: "bg-blue-50 dark:bg-blue-500/10", color: "text-blue-600 dark:text-blue-400",
+            icon: <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.8"><path strokeLinecap="round" strokeLinejoin="round" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" /></svg> },
           { label: "Top document",
             value: topDoc ? topDoc.name.slice(0, 22) + (topDoc.name.length > 22 ? "…" : "") : "—",
             sub: topDoc ? `${topDoc.queries.toLocaleString()} queries` : "No data",
-            icon: "⭐", bg: "bg-amber-50", color: "text-amber-600" },
+            bg: "bg-amber-50 dark:bg-amber-500/10", color: "text-amber-600 dark:text-amber-400",
+            icon: <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.8"><path strokeLinecap="round" strokeLinejoin="round" d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.196-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.783-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z" /></svg> },
         ].map(c => (
           <div key={c.label} className="bg-white dark:bg-slate-900 rounded-2xl border border-gray-200 dark:border-slate-700 shadow-sm p-6">
-            <div className={`w-10 h-10 ${c.bg} rounded-xl flex items-center justify-center text-xl mb-3`}>{c.icon}</div>
+            <div className={`w-10 h-10 ${c.bg} ${c.color} rounded-xl flex items-center justify-center mb-3`}>{c.icon}</div>
             <div className={`text-2xl font-bold ${c.color} leading-none`}>{c.value}</div>
             <div className="text-xs text-gray-500 dark:text-slate-400 font-medium mt-1">{c.label}</div>
             <div className="text-[11px] text-gray-400">{c.sub}</div>

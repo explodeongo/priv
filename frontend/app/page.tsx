@@ -26,6 +26,29 @@ interface Source {
   preview: string;
   url?: string;
   upload?: boolean;
+  origin_type?: string;   // "" = bundled KB · "repo" · "web" · "file"
+  domain?: string;        // KB domain (TM Forum / ODA / MEF / …) when origin_type === ""
+}
+
+// Trust tier for a citation — drives the badge icon, colour and label.
+function sourceTier(s: Source): { label: string; cls: string; dot: string; icon: React.ReactNode } {
+  const ot = s.origin_type;
+  if (ot === "repo") return {
+    label: "GitHub repository", cls: "text-violet-600 dark:text-violet-400", dot: "bg-violet-500",
+    icon: <svg className="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.58 2 12.25c0 4.53 2.87 8.37 6.84 9.73.5.1.68-.22.68-.49l-.01-1.9c-2.78.62-3.37-1.2-3.37-1.2-.46-1.18-1.11-1.5-1.11-1.5-.91-.64.07-.62.07-.62 1 .07 1.53 1.06 1.53 1.06.9 1.56 2.36 1.11 2.94.85.09-.66.35-1.11.63-1.36-2.22-.26-4.56-1.14-4.56-5.07 0-1.12.39-2.03 1.03-2.75-.1-.26-.45-1.3.1-2.71 0 0 .84-.27 2.75 1.05a9.4 9.4 0 015 0c1.91-1.32 2.75-1.05 2.75-1.05.55 1.41.2 2.45.1 2.71.64.72 1.03 1.63 1.03 2.75 0 3.94-2.34 4.81-4.57 5.06.36.32.68.94.68 1.9l-.01 2.81c0 .27.18.6.69.49A10.03 10.03 0 0022 12.25C22 6.58 17.52 2 12 2z"/></svg>,
+  };
+  if (ot === "web") return {
+    label: "Web page", cls: "text-sky-600 dark:text-sky-400", dot: "bg-sky-500",
+    icon: <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.8"><circle cx="12" cy="12" r="9" /><path strokeLinecap="round" d="M3 12h18M12 3a14 14 0 010 18M12 3a14 14 0 000 18" /></svg>,
+  };
+  if (ot === "file") return {
+    label: "Internal upload", cls: "text-amber-600 dark:text-amber-400", dot: "bg-amber-500",
+    icon: <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.8"><path strokeLinecap="round" strokeLinejoin="round" d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" /></svg>,
+  };
+  return {
+    label: `Official${s.domain ? " · " + s.domain : ""}`, cls: "text-emerald-600 dark:text-emerald-400", dot: "bg-emerald-500",
+    icon: <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.8"><path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" /></svg>,
+  };
 }
 
 interface Message {
@@ -168,6 +191,7 @@ function SourceDrawer({ source, onClose }: { source: Source; onClose: () => void
   }, [onClose]);
 
   const cleanName = stripMd(source.name);
+  const tier = sourceTier(source);
 
   return (
     <>
@@ -180,8 +204,9 @@ function SourceDrawer({ source, onClose }: { source: Source; onClose: () => void
         <div className="flex items-start justify-between p-5 border-b border-gray-100 dark:border-slate-800 bg-gray-50 dark:bg-slate-800/50">
           <div className="flex-1 min-w-0 pr-3">
             <div className="flex items-center gap-2 mb-1.5">
-              <span className="w-2 h-2 rounded-full bg-red-500 flex-shrink-0" />
-              <span className="text-xs font-bold text-red-600 uppercase tracking-widest">Source Document</span>
+              <span className={`inline-flex items-center gap-1.5 text-[11px] font-semibold px-2 py-0.5 rounded-full bg-gray-100 dark:bg-slate-800 ${tier.cls}`}>
+                {tier.icon}{tier.label}
+              </span>
             </div>
             <h3 className="font-semibold text-gray-900 dark:text-slate-100 text-sm leading-snug">{cleanName}</h3>
             <p className="text-xs text-gray-400 mt-1 font-mono">{source.file} · chunk {source.chunk}</p>
@@ -414,7 +439,7 @@ export default function Home() {
         setLast({ content: acc ? acc + "\n\n_(stopped)_" : "_(stopped)_" });
         if (acc) save();
       } else if (e.name === "AbortError" || e.name === "TimeoutError") {
-        setLast({ content: "The model went quiet for too long — on a slower PC it may still be loading. Try **⚡ Fast** mode (next to the scope buttons), or ask again in a moment.", error: true });
+        setLast({ content: "The model went quiet for too long — on a slower PC it may still be loading. Try **Fast** mode (next to the scope buttons), or ask again in a moment.", error: true });
       } else {
         setLast({ content: `Could not reach SynaptDI API: ${e.message}. Make sure uvicorn is running on port 8000.`, error: true });
       }
@@ -469,8 +494,8 @@ export default function Home() {
     const ts = new Date();
     const out: string[] = ["# SynaptDI conversation", `_Exported ${ts.toLocaleString()}_`, ""];
     messages.forEach(m => {
-      if (m.role === "user") { out.push("## 🧑 You", "", m.content, ""); return; }
-      out.push("## 🤖 SynaptDI", "", m.content || "_(no answer)_", "");
+      if (m.role === "user") { out.push("## You", "", m.content, ""); return; }
+      out.push("## SynaptDI", "", m.content || "_(no answer)_", "");
       if (m.sources?.length) {
         out.push("**Sources:** " + m.sources.map(s => s.url ? `[${stripMd(s.name)}](${s.url})` : stripMd(s.name)).join(" · "), "");
       }
@@ -615,34 +640,36 @@ export default function Home() {
                   {prefs.showSrc && msg.sources && msg.sources.length > 0 && (
                     <div className="mt-2.5 flex flex-wrap gap-2 items-center">
                       <span className="text-xs text-gray-400 font-medium">Sources:</span>
-                      {msg.sources.map((src, si) => (
+                      {msg.sources.map((src, si) => {
+                        const tier = sourceTier(src);
+                        return (
                         <span key={si} className="inline-flex items-center">
                           {src.url ? (
                             <>
-                              <a href={src.url} target="_blank" rel="noopener noreferrer"
-                                className="group flex items-center gap-1.5 text-xs bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 text-gray-500 dark:text-slate-300 hover:text-red-600 dark:hover:text-red-400 hover:border-red-300 dark:hover:border-red-500/40 hover:bg-red-50 dark:hover:bg-red-500/10 rounded-l-full px-3 py-1 transition-all">
-                                <span className="w-1.5 h-1.5 rounded-full bg-red-500 flex-shrink-0" />
+                              <a href={src.url} target="_blank" rel="noopener noreferrer" title={`${tier.label} — open source`}
+                                className="group flex items-center gap-1.5 text-xs bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 text-gray-500 dark:text-slate-300 hover:text-red-600 dark:hover:text-red-400 hover:border-red-300 dark:hover:border-red-500/40 hover:bg-red-50 dark:hover:bg-red-500/10 rounded-l-full pl-2.5 pr-3 py-1 transition-all">
+                                <span className={`flex-shrink-0 ${tier.cls}`}>{tier.icon}</span>
                                 {stripMd(src.name)}
-                                <span className="text-gray-300 group-hover:text-red-400">↗</span>
+                                <svg className="w-3 h-3 text-gray-300 group-hover:text-red-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" /></svg>
                               </a>
-                              <button onClick={() => setActiveSource(src)}
-                                className="text-xs bg-white dark:bg-slate-800 border border-l-0 border-gray-200 dark:border-slate-700 text-gray-400 dark:text-slate-400 hover:text-red-600 dark:hover:text-red-400 hover:border-red-300 dark:hover:border-red-500/40 hover:bg-red-50 dark:hover:bg-red-500/10 rounded-r-full px-2 py-1 transition-all"
-                                title="View chunk preview">
-                                ···
+                              <button onClick={() => setActiveSource(src)} title="View the exact chunk"
+                                className="inline-flex items-center text-xs bg-white dark:bg-slate-800 border border-l-0 border-gray-200 dark:border-slate-700 text-gray-400 dark:text-slate-400 hover:text-red-600 dark:hover:text-red-400 hover:border-red-300 dark:hover:border-red-500/40 hover:bg-red-50 dark:hover:bg-red-500/10 rounded-r-full px-2 py-1 transition-all">
+                                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.8"><path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /><path strokeLinecap="round" strokeLinejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" /></svg>
                               </button>
                             </>
                           ) : (
-                            <button onClick={() => setActiveSource(src)}
-                              className="group flex items-center gap-1.5 text-xs bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 text-gray-500 dark:text-slate-300 hover:text-red-600 dark:hover:text-red-400 hover:border-red-300 dark:hover:border-red-500/40 hover:bg-red-50 dark:hover:bg-red-500/10 rounded-full px-3 py-1 transition-all">
-                              <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${src.upload ? "bg-amber-500" : "bg-red-500"}`} />
+                            <button onClick={() => setActiveSource(src)} title={`${tier.label} — view the exact chunk`}
+                              className="group flex items-center gap-1.5 text-xs bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 text-gray-500 dark:text-slate-300 hover:text-red-600 dark:hover:text-red-400 hover:border-red-300 dark:hover:border-red-500/40 hover:bg-red-50 dark:hover:bg-red-500/10 rounded-full pl-2.5 pr-3 py-1 transition-all">
+                              <span className={`flex-shrink-0 ${tier.cls}`}>{tier.icon}</span>
                               {stripMd(src.name)}
-                              {src.upload && <span className="text-amber-600 text-[10px] font-medium">· your doc</span>}
                             </button>
                           )}
                         </span>
-                      ))}
+                      );})}
                       {msg.cached ? (
-                        <span className="text-xs text-amber-500 ml-1" title="Served from the answer cache">⚡ instant</span>
+                        <span className="inline-flex items-center gap-1 text-xs text-amber-500 ml-1" title="Served from the answer cache">
+                          <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 24 24"><path d="M13 2L4.5 13.5H11l-1 8.5 8.5-11.5H12l1-8.5z" /></svg>instant
+                        </span>
                       ) : msg.latency_ms ? (
                         <span className="text-xs text-gray-300 ml-1">{(msg.latency_ms / 1000).toFixed(1)}s</span>
                       ) : null}
@@ -667,9 +694,13 @@ export default function Home() {
                       )}
                       <span className="mx-1 w-px h-3.5 bg-gray-200 dark:bg-slate-700" />
                       <button onClick={() => sendFeedback(i, "up")} title="Helpful"
-                        className={`text-sm px-1 py-0.5 rounded hover:bg-gray-100 transition-colors ${feedbackIdx[i] === "up" ? "opacity-100" : "opacity-50 hover:opacity-100"}`}>👍</button>
+                        className={`p-1 rounded hover:bg-gray-100 dark:hover:bg-slate-800 transition-colors ${feedbackIdx[i] === "up" ? "text-emerald-500" : "text-gray-400 hover:text-gray-600 dark:text-slate-500 dark:hover:text-slate-300"}`}>
+                        <svg className="w-3.5 h-3.5" fill={feedbackIdx[i] === "up" ? "currentColor" : "none"} viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.8"><path strokeLinecap="round" strokeLinejoin="round" d="M14 9V5a3 3 0 00-3-3l-4 9v11h11.28a2 2 0 002-1.7l1.38-9a2 2 0 00-2-2.3zM7 22H4a2 2 0 01-2-2v-7a2 2 0 012-2h3" /></svg>
+                      </button>
                       <button onClick={() => sendFeedback(i, "down")} title="Not helpful"
-                        className={`text-sm px-1 py-0.5 rounded hover:bg-gray-100 transition-colors ${feedbackIdx[i] === "down" ? "opacity-100" : "opacity-50 hover:opacity-100"}`}>👎</button>
+                        className={`p-1 rounded hover:bg-gray-100 dark:hover:bg-slate-800 transition-colors ${feedbackIdx[i] === "down" ? "text-red-500" : "text-gray-400 hover:text-gray-600 dark:text-slate-500 dark:hover:text-slate-300"}`}>
+                        <svg className="w-3.5 h-3.5" fill={feedbackIdx[i] === "down" ? "currentColor" : "none"} viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.8"><path strokeLinecap="round" strokeLinejoin="round" d="M10 15v4a3 3 0 003 3l4-9V2H5.72a2 2 0 00-2 1.7l-1.38 9a2 2 0 002 2.3zm7-13h2.67A2.31 2.31 0 0122 4v7a2.31 2.31 0 01-2.33 2H17" /></svg>
+                      </button>
                     </div>
                   )}
 
@@ -718,7 +749,11 @@ export default function Home() {
                   ? "bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400 border-amber-300 dark:border-amber-500/40"
                   : "bg-white dark:bg-slate-800 text-gray-500 dark:text-slate-400 border-gray-200 dark:border-slate-700 hover:bg-gray-50 dark:hover:bg-slate-700"
               }`}>
-              {mode === "fast" ? "⚡ Fast" : "🧠 Deep"}
+              {mode === "fast" ? (
+                <><svg className="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24"><path d="M13 2L4.5 13.5H11l-1 8.5 8.5-11.5H12l1-8.5z" /></svg>Fast</>
+              ) : (
+                <><svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.8"><path strokeLinecap="round" strokeLinejoin="round" d="M5 3v4M3 5h4M6 17v4m-2-2h4m6-15l2.5 6.5L21 13l-6.5 2.5L12 22l-2.5-6.5L3 13l6.5-2.5L12 2z" /></svg>Deep</>
+              )}
             </button>
           </div>
           <div className="max-w-3xl mx-auto flex items-end gap-3">
