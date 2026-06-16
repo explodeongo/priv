@@ -22,7 +22,8 @@ from pathlib import Path
 from typing import Optional
 
 from fastapi import FastAPI, HTTPException, UploadFile, File, BackgroundTasks, Header, Depends
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, FileResponse
+import mimetypes
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import chromadb
@@ -1384,6 +1385,80 @@ def documents_library():
         "groups": sorted_groups,
     }
 
+# ── Document preview (read the actual file content in-app) ───────────────────────
+_KB_PATHS: dict[str, str] = {}      # basename → full path under data/ (lazy, cleared on refresh)
+
+def _kb_path_index() -> dict[str, str]:
+    global _KB_PATHS
+    if not _KB_PATHS:
+        data_dir = Path("./data")
+        if data_dir.exists():
+            for p in data_dir.rglob("*"):
+                if p.is_file() and not p.name.startswith("."):
+                    _KB_PATHS.setdefault(p.name, str(p))
+    return _KB_PATHS
+
+def _resolve_doc_file(file: str) -> Optional[Path]:
+    """Map a document's name to a real file on disk — uploads first, then the KB.
+    Only the basename is used, so a request can never escape uploads/ or data/."""
+    name = Path(file or "").name
+    if not name:
+        return None
+    up = UPLOADS_DIR / name                       # an uploaded original
+    if up.is_file():
+        return up
+    kb = _kb_path_index().get(name)               # a bundled KB spec/doc
+    if kb and Path(kb).is_file():
+        return Path(kb)
+    return None
+
+PREVIEW_MAX_CHARS = 600_000                        # ~600 KB cap for inline text preview
+
+@app.get("/documents/raw")
+def document_raw(file: str):
+    """Return a document's content as text for the in-app reader. Text files are
+    returned verbatim (JSON pretty-printed); PDF/DOCX/XLSX/PPTX are returned as
+    extracted text. Binary originals are streamed via /documents/file instead."""
+    path = _resolve_doc_file(file)
+    if not path:
+        raise HTTPException(404, "Document not found")
+    ext = path.suffix.lower()
+    if   ext in (".md", ".markdown", ".rst"):           kind, lang = "markdown", "markdown"
+    elif ext == ".json":                                 kind, lang = "code", "json"
+    elif ext in (".yaml", ".yml"):                       kind, lang = "code", "yaml"
+    elif ext == ".csv":                                  kind, lang = "code", "csv"
+    elif ext in (".pdf", ".docx", ".xlsx", ".pptx"):     kind, lang = "extracted", ext.lstrip(".")
+    else:                                                 kind, lang = "text", ""
+
+    try:
+        if kind == "extracted":
+            content = extract_text(path.read_bytes(), path.name)
+        else:
+            content = path.read_text(encoding="utf-8", errors="ignore")
+            if ext == ".json":                          # pretty-print for readability
+                try:    content = json.dumps(json.loads(content), indent=2, ensure_ascii=False)
+                except Exception: pass
+    except Exception as e:
+        raise HTTPException(500, f"Could not read document: {e}")
+
+    truncated = len(content) > PREVIEW_MAX_CHARS
+    return {"name": path.name, "ext": ext,
+            "kind": "text" if kind == "extracted" else kind, "lang": lang,
+            "extracted": kind == "extracted", "bytes": path.stat().st_size,
+            "truncated": truncated, "content": content[:PREVIEW_MAX_CHARS],
+            "downloadable": ext in (".pdf", ".docx", ".xlsx", ".pptx")}
+
+@app.get("/documents/file")
+def document_file(file: str, download: bool = False):
+    """Serve a document's original bytes — used to embed PDFs inline and to download originals."""
+    path = _resolve_doc_file(file)
+    if not path:
+        raise HTTPException(404, "Document not found")
+    media = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+    disp  = "attachment" if download else "inline"
+    return FileResponse(str(path), media_type=media,
+                        headers={"Content-Disposition": f'{disp}; filename="{path.name}"'})
+
 def _categorize(*hints) -> str:
     """Best-effort domain bucket for a USER-ADDED source (defaults to 'Other')."""
     blob = " ".join(h for h in hints if h).lower()
@@ -1815,32 +1890,37 @@ def get_analytics(_admin: dict = Depends(require_admin)):
     }
 
 @app.post("/admin/refresh-kb")
-def refresh_kb(mode: str = "selective", _admin: dict = Depends(require_admin)):
+def refresh_kb(mode: str = "selective", domain: str = "", _admin: dict = Depends(require_admin)):
     """Re-pull the TM Forum source repos and update the index.
     mode=selective (default): pull upstream + re-embed ONLY changed/removed files — fast.
-    mode=full: drop and rebuild the whole index from scratch."""
+    mode=full: drop and rebuild the whole index from scratch.
+    domain (e.g. "TM Forum", "ODA"): scope a selective refresh to one KB folder only."""
     mode = "full" if (mode or "").lower() == "full" else "selective"
+    domain = (domain or "").strip()
+    if domain:                                  # per-folder refresh is always selective
+        mode = "selective"
     if PROCESSING_STATUS.get("__kb_refresh__", {}).get("status") == "processing":
         return {"status": "processing"}
     def _run():
         global _spec_map, _spec_names
-        PROCESSING_STATUS["__kb_refresh__"] = {"status": "processing", "mode": mode}
+        PROCESSING_STATUS["__kb_refresh__"] = {"status": "processing", "mode": mode, "domain": domain or "all"}
         try:
             url_map = ingest.download_data(update=True)     # pull upstream changes
             if mode == "full":
                 n = ingest.build_index(url_map)
                 result = {"chunks": n}
             else:
-                result = ingest.sync_index(url_map)         # only changed files
+                result = ingest.sync_index(url_map, domain=domain or None)   # only changed files
             with _chroma_lock:                 # force re-open of the updated collection
                 reset_store()
                 _spec_map = None; _spec_names = []
+            _KB_PATHS.clear()                  # KB files changed → rebuild preview path index lazily
             cache_clear()
-            PROCESSING_STATUS["__kb_refresh__"] = {"status": "indexed", "mode": mode, **result}
+            PROCESSING_STATUS["__kb_refresh__"] = {"status": "indexed", "mode": mode, "domain": domain or "all", **result}
         except Exception as e:
             PROCESSING_STATUS["__kb_refresh__"] = {"status": "failed", "error": str(e)[:200]}
     threading.Thread(target=_run, daemon=True).start()
-    return {"status": "processing", "mode": mode}
+    return {"status": "processing", "mode": mode, "domain": domain or "all"}
 
 class RefreshSourceReq(BaseModel):
     origin: str

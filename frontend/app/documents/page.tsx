@@ -3,6 +3,7 @@ import { useState, useRef, useEffect, useCallback, Fragment } from "react";
 import AppShell from "../components/AppShell";
 import { useAuth } from "../components/AuthProvider";
 import { useToast } from "../components/Toast";
+import { DocPreview } from "../components/DocPreview";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -94,8 +95,11 @@ function ManagementTab({ user }: { user: { role: string } | null }) {
   const [activeLib, setActiveLib]     = useState<string | null>(null);
   const [loadingLib, setLoadingLib]   = useState(true);
   const [folders, setFolders]         = useState<{ name: string; count: number }[]>([]);
+  const [kbBusy, setKbBusy]           = useState<string | null>(null);   // which KB domain is refreshing ("all" = whole KB)
+  const [preview, setPreview]         = useState<{ file: string; name: string } | null>(null);  // in-app document reader
 
   const canUpload = user?.role === "admin" || user?.role === "analyst";
+  const isAdmin   = user?.role === "admin";   // KB refresh pulls upstream → admin-only
 
   const [repoUrl, setRepoUrl] = useState("");
   const [webUrl,  setWebUrl]  = useState("");
@@ -290,6 +294,38 @@ function ManagementTab({ user }: { user: { role: string } | null }) {
       toast(d.refreshed ? `Refreshing ${d.refreshed} source(s)…` : (d.note || "Nothing to refresh here"), "info");
       fetchDocs();
     } catch { toast("Failed to refresh folder", "error"); }
+  };
+
+  // Pull the latest from TM Forum / ODA upstream and re-embed only what changed.
+  // domain omitted → whole KB; domain set → just that folder (TM Forum, ODA, …).
+  const refreshKB = async (domain?: string) => {
+    if (kbBusy) { toast("A knowledge-base refresh is already running…", "warning"); return; }
+    setKbBusy(domain || "all");
+    toast(domain ? `Checking “${domain}” for upstream updates…` : "Checking the knowledge base for upstream updates…", "info");
+    try {
+      const qs = new URLSearchParams({ mode: "selective", ...(domain ? { domain } : {}) });
+      const r  = await fetch(`${API}/admin/refresh-kb?${qs.toString()}`, { method: "POST", headers: authHdr() });
+      if (!r.ok) throw new Error(r.status === 403 ? "Admin only" : "Could not start refresh");
+      const who = domain || "Knowledge base";
+      const poll = async (): Promise<void> => {
+        const s = await fetch(`${API}/admin/refresh-kb/status`, { headers: authHdr() })
+          .then(x => x.json()).catch(() => ({}));
+        if (s.status === "processing") { await new Promise(res => setTimeout(res, 2500)); return poll(); }
+        if (s.status === "failed") {
+          toast(`${who} refresh failed: ${s.error || "unknown error"}`, "error");
+        } else {
+          const ch = s.changed ?? 0, rm = s.removed ?? 0, added = s.chunks_added ?? s.chunks ?? 0;
+          toast(ch || rm || added
+            ? `${who} updated — ${ch} changed, ${rm} removed, ${added} chunks re-embedded`
+            : `${who} is already up to date ✓`, "success");
+        }
+        setKbBusy(null); fetchLibrary(); fetchDocs();
+      };
+      poll();
+    } catch (e: any) {
+      toast(e.message || "Failed to refresh knowledge base", "error");
+      setKbBusy(null);
+    }
   };
 
   const visible = docs.filter(d =>
@@ -503,7 +539,12 @@ function ManagementTab({ user }: { user: { role: string } | null }) {
                       </div>
                       <div className="min-w-0">
                         <div className="flex items-center gap-2">
-                          <span className="text-sm font-semibold text-gray-900 dark:text-slate-100 truncate max-w-xs">{doc.name}</span>
+                          {(doc.type === "repo" || doc.type === "web") ? (
+                            <span className="text-sm font-semibold text-gray-900 dark:text-slate-100 truncate max-w-xs">{doc.name}</span>
+                          ) : (
+                            <button onClick={() => setPreview({ file: doc.file, name: doc.name })} title="Open to read"
+                              className="text-sm font-semibold text-gray-900 dark:text-slate-100 truncate max-w-xs text-left hover:text-red-600 dark:hover:text-red-400 hover:underline cursor-pointer">{doc.name}</button>
+                          )}
                           {doc.type && doc.type !== "file" && (
                             <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-amber-50 text-amber-700 border border-amber-200 flex-shrink-0 tracking-wide">
                               {doc.type === "repo" ? "GIT REPO" : "WEB"}
@@ -586,12 +627,27 @@ function ManagementTab({ user }: { user: { role: string } | null }) {
 
       {/* ── Knowledge Base (data/ folder) ──────────────────────────────────── */}
       <div>
-        <div className="flex items-baseline justify-between mb-3">
-          <h2 className="text-sm font-semibold text-gray-900 dark:text-slate-100">Knowledge Base</h2>
-          <p className="text-xs text-gray-400">
-            {libSummary.total_files.toLocaleString()} files · {libSummary.total_chunks.toLocaleString()} chunks · pre-indexed, read-only
-          </p>
+        <div className="flex items-center justify-between mb-1 gap-3">
+          <div className="flex items-baseline gap-2 min-w-0">
+            <h2 className="text-sm font-semibold text-gray-900 dark:text-slate-100">Knowledge Base</h2>
+            <p className="text-xs text-gray-400 truncate">
+              {libSummary.total_files.toLocaleString()} files · {libSummary.total_chunks.toLocaleString()} chunks · TM Forum + ODA, synced from GitHub
+            </p>
+          </div>
+          {isAdmin && (
+            <button onClick={() => refreshKB()} disabled={!!kbBusy}
+              title="Pull the latest specs from TM Forum / ODA on GitHub and re-embed only what changed"
+              className="flex items-center gap-1.5 flex-shrink-0 text-xs font-medium px-2.5 py-1.5 rounded-lg border border-gray-200 dark:border-slate-700 text-gray-600 dark:text-slate-300 hover:border-red-300 dark:hover:border-red-500/50 hover:text-red-600 dark:hover:text-red-400 disabled:opacity-50 disabled:cursor-not-allowed transition-colors">
+              <svg className={`w-3.5 h-3.5 ${kbBusy === "all" ? "animate-spin" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+              </svg>
+              {kbBusy === "all" ? "Checking…" : "Check for updates"}
+            </button>
+          )}
         </div>
+        <p className="text-[11px] text-gray-400 dark:text-slate-500 mb-3">
+          The TM Forum &amp; ODA specs come from their public GitHub. {isAdmin ? "Use “Check for updates” to re-sync — only changed specs are re-embedded." : "An admin keeps these in sync with upstream."}
+        </p>
 
         {loadingLib ? (
           <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
@@ -605,14 +661,16 @@ function ManagementTab({ user }: { user: { role: string } | null }) {
             </div>
             <div className="divide-y divide-gray-50 dark:divide-slate-800 max-h-80 overflow-y-auto">
               {libMatches.map(doc => (
-                <div key={doc.file} className="flex items-center gap-3 px-4 py-2 hover:bg-gray-50 dark:hover:bg-slate-800/60 transition-colors">
+                <button key={doc.file} onClick={() => setPreview({ file: doc.file, name: doc.name })}
+                  className="w-full text-left flex items-center gap-3 px-4 py-2 hover:bg-gray-50 dark:hover:bg-slate-800/60 transition-colors group/row cursor-pointer">
                   <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-blue-50 dark:bg-blue-500/10 text-blue-700 dark:text-blue-400 border border-blue-200 dark:border-blue-500/30 flex-shrink-0">{doc.group}</span>
                   <div className="min-w-0 flex-1">
-                    <div className="text-sm font-medium text-gray-800 dark:text-slate-200 truncate">{doc.name}</div>
+                    <div className="text-sm font-medium text-gray-800 dark:text-slate-200 truncate group-hover/row:text-red-600 dark:group-hover/row:text-red-400">{doc.name}</div>
                     <div className="text-[11px] text-gray-400 font-mono truncate">{doc.file}</div>
                   </div>
                   <span className="text-xs text-gray-400 flex-shrink-0">{doc.chunks.toLocaleString()} chunks</span>
-                </div>
+                  <svg className="w-4 h-4 flex-shrink-0 text-gray-300 dark:text-slate-600 opacity-0 group-hover/row:opacity-100 group-hover/row:text-red-500 transition" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/><path strokeLinecap="round" strokeLinejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/></svg>
+                </button>
               ))}
               {libMatches.length === 0 && (
                 <div className="py-8 text-center text-sm text-gray-400">No specs match — try a TMF number or a keyword like “order”.</div>
@@ -625,23 +683,37 @@ function ManagementTab({ user }: { user: { role: string } | null }) {
             <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
               {libGroups.map(group => {
                 const active = activeLib === group.id;
+                const busy   = kbBusy === group.name;
                 return (
-                  <button key={group.id} onClick={() => setActiveLib(active ? null : group.id)}
-                    className={`flex items-center gap-2.5 px-3.5 py-3 rounded-xl border text-left transition-all ${
-                      active
-                        ? "bg-red-50 dark:bg-red-500/10 border-red-300 dark:border-red-500/40 shadow-sm"
-                        : "bg-white dark:bg-slate-900 border-gray-200 dark:border-slate-700 hover:border-red-200 dark:hover:border-slate-500 hover:shadow-sm"
-                    }`}>
-                    <svg className={`w-5 h-5 flex-shrink-0 ${active ? "text-red-500" : "text-amber-500"}`} fill="currentColor" viewBox="0 0 24 24">
-                      <path d="M10 4H4a2 2 0 00-2 2v12a2 2 0 002 2h16a2 2 0 002-2V8a2 2 0 00-2-2h-8l-2-2z"/>
-                    </svg>
-                    <div className="min-w-0">
-                      <div className={`text-sm font-semibold truncate ${active ? "text-red-700 dark:text-red-400" : "text-gray-800 dark:text-slate-200"}`}>{group.name}</div>
-                      <div className="text-[11px] text-gray-400">{group.files} files · {group.chunks.toLocaleString()} chunks</div>
-                    </div>
-                    <svg className={`w-3.5 h-3.5 ml-auto flex-shrink-0 text-gray-300 dark:text-slate-600 transition-transform ${active ? "rotate-90 text-red-400" : ""}`}
-                      fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><polyline points="9 18 15 12 9 6"/></svg>
-                  </button>
+                  <div key={group.id} className="relative group/kb">
+                    <button onClick={() => setActiveLib(active ? null : group.id)}
+                      className={`w-full flex items-center gap-2.5 px-3.5 py-3 rounded-xl border text-left transition-all ${
+                        active
+                          ? "bg-red-50 dark:bg-red-500/10 border-red-300 dark:border-red-500/40 shadow-sm"
+                          : "bg-white dark:bg-slate-900 border-gray-200 dark:border-slate-700 hover:border-red-200 dark:hover:border-slate-500 hover:shadow-sm"
+                      }`}>
+                      <svg className={`w-5 h-5 flex-shrink-0 ${active ? "text-red-500" : "text-amber-500"}`} fill="currentColor" viewBox="0 0 24 24">
+                        <path d="M10 4H4a2 2 0 00-2 2v12a2 2 0 002 2h16a2 2 0 002-2V8a2 2 0 00-2-2h-8l-2-2z"/>
+                      </svg>
+                      <div className="min-w-0">
+                        <div className={`text-sm font-semibold truncate ${active ? "text-red-700 dark:text-red-400" : "text-gray-800 dark:text-slate-200"}`}>{group.name}</div>
+                        <div className="text-[11px] text-gray-400">{group.files} files · {group.chunks.toLocaleString()} chunks</div>
+                      </div>
+                      <svg className={`w-3.5 h-3.5 ml-auto flex-shrink-0 text-gray-300 dark:text-slate-600 transition-transform ${active ? "rotate-90 text-red-400" : ""} ${isAdmin ? "mr-5" : ""}`}
+                        fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><polyline points="9 18 15 12 9 6"/></svg>
+                    </button>
+                    {isAdmin && (
+                      <button onClick={(e) => { e.stopPropagation(); refreshKB(group.name); }} disabled={!!kbBusy}
+                        title={`Check “${group.name}” for upstream updates and re-embed only what changed`}
+                        className={`absolute top-1/2 -translate-y-1/2 right-2 p-1 rounded-md text-gray-300 dark:text-slate-600 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-500/10 transition-opacity ${
+                          busy ? "opacity-100 text-red-500" : "opacity-0 group-hover/kb:opacity-100 focus:opacity-100"
+                        } disabled:cursor-not-allowed`}>
+                        <svg className={`w-3.5 h-3.5 ${busy ? "animate-spin" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+                        </svg>
+                      </button>
+                    )}
+                  </div>
                 );
               })}
             </div>
@@ -657,13 +729,15 @@ function ManagementTab({ user }: { user: { role: string } | null }) {
                   </div>
                   <div className="divide-y divide-gray-50 dark:divide-slate-800 max-h-80 overflow-y-auto">
                     {group.documents.map(doc => (
-                      <div key={doc.file} className="flex items-center gap-3 px-4 py-2 hover:bg-gray-50 dark:hover:bg-slate-800/60 transition-colors">
+                      <button key={doc.file} onClick={() => setPreview({ file: doc.file, name: doc.name })}
+                        className="w-full text-left flex items-center gap-3 px-4 py-2 hover:bg-gray-50 dark:hover:bg-slate-800/60 transition-colors group/row cursor-pointer">
                         <div className="min-w-0 flex-1">
-                          <div className="text-sm font-medium text-gray-800 dark:text-slate-200 truncate">{doc.name}</div>
+                          <div className="text-sm font-medium text-gray-800 dark:text-slate-200 truncate group-hover/row:text-red-600 dark:group-hover/row:text-red-400">{doc.name}</div>
                           <div className="text-[11px] text-gray-400 font-mono truncate">{doc.file}</div>
                         </div>
                         <span className="text-xs text-gray-400 flex-shrink-0">{doc.chunks.toLocaleString()} chunks</span>
-                      </div>
+                        <svg className="w-4 h-4 flex-shrink-0 text-gray-300 dark:text-slate-600 opacity-0 group-hover/row:opacity-100 group-hover/row:text-red-500 transition" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/><path strokeLinecap="round" strokeLinejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/></svg>
+                      </button>
                     ))}
                   </div>
                 </div>
@@ -672,6 +746,8 @@ function ManagementTab({ user }: { user: { role: string } | null }) {
           </>
         )}
       </div>
+
+      {preview && <DocPreview file={preview.file} name={preview.name} onClose={() => setPreview(null)} />}
     </div>
   );
 }
