@@ -552,7 +552,15 @@ function ManagementTab({ user }: { user: { role: string } | null }) {
                           )}
                         </div>
                         <div className="text-xs text-gray-400 truncate">
-                          <span className="font-mono">{doc.url || doc.file}</span>
+                          {doc.url ? (
+                            <a href={doc.url} target="_blank" rel="noreferrer" onClick={e => e.stopPropagation()} title={doc.url}
+                              className="font-mono text-gray-500 dark:text-slate-400 hover:text-red-600 dark:hover:text-red-400 hover:underline inline-flex items-center gap-1">
+                              {doc.url}
+                              <svg className="w-3 h-3 flex-shrink-0 opacity-60" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"/></svg>
+                            </a>
+                          ) : (
+                            <span className="font-mono">{doc.file}</span>
+                          )}
                           {doc.size ? <span> · {doc.size}</span> : null}
                           {doc.uploaded ? <span> · {doc.uploaded}</span> : null}
                         </div>
