@@ -475,7 +475,7 @@ export default function Home() {
       } else if (e.name === "AbortError" || e.name === "TimeoutError") {
         setLast({ content: "The model went quiet for too long — on a slower PC it may still be loading. Try **Fast** mode (next to the scope buttons), or ask again in a moment.", error: true });
       } else {
-        setLast({ content: `Could not reach SynaptDI API: ${e.message}. Make sure uvicorn is running on port 8000.`, error: true });
+        setLast({ content: "Couldn't reach SynaptDI just now — the server may be starting up or restarting. It reconnects automatically; please try your question again in a moment.", error: true });
       }
     } finally {
       clearTimeout(timeout);
