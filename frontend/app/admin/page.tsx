@@ -318,10 +318,23 @@ function AnalyticsTab() {
   const toast = useToast();
   const [data, setData] = useState<any>(null);
   const [refreshing, setRefreshing] = useState(false);
+  const [sched, setSched] = useState<{ enabled: boolean; interval: string; hour: number; last_run: number; next_run: number } | null>(null);
 
   useEffect(() => {
     fetch(`${API}/analytics`, { headers: authHeaders() }).then(r => (r.ok ? r.json() : null)).then(setData).catch(() => {});
+    fetch(`${API}/admin/refresh-schedule`, { headers: authHeaders() }).then(r => (r.ok ? r.json() : null)).then(setSched).catch(() => {});
   }, []);
+
+  const saveSched = async (patch: Partial<{ enabled: boolean; interval: string; hour: number }>) => {
+    const next = { enabled: sched?.enabled ?? false, interval: sched?.interval ?? "weekly", hour: sched?.hour ?? 3, ...patch };
+    setSched(s => (s ? { ...s, ...next } : s));   // optimistic
+    try {
+      const r = await fetch(`${API}/admin/refresh-schedule`, { method: "PUT", headers: { "Content-Type": "application/json", ...authHeaders() }, body: JSON.stringify(next) });
+      if (!r.ok) throw new Error();
+      setSched(await r.json());
+      toast(next.enabled ? "Auto-refresh scheduled" : "Auto-refresh turned off", "success");
+    } catch { toast("Could not save schedule", "error"); }
+  };
 
   const refreshKB = async (mode: "selective" | "full") => {
     const ok = confirm(mode === "full"
@@ -479,6 +492,35 @@ function AnalyticsTab() {
             Full rebuild
           </button>
         </div>
+      </div>
+
+      {/* Scheduled auto-refresh */}
+      <div className="bg-white dark:bg-slate-900 rounded-2xl border border-gray-200 dark:border-slate-700 shadow-sm p-5">
+        <div className="flex items-start justify-between gap-4">
+          <div className="min-w-0">
+            <h2 className="text-sm font-semibold text-gray-900 dark:text-slate-100">Scheduled auto-refresh</h2>
+            <p className="text-xs text-gray-400 mt-0.5">Keep the knowledge base current automatically — pulls from TM Forum on a schedule, re-embedding only what changed.</p>
+          </div>
+          <button onClick={() => saveSched({ enabled: !sched?.enabled })} role="switch" aria-checked={!!sched?.enabled} title="Toggle auto-refresh"
+            className={`relative w-11 h-6 rounded-full flex-shrink-0 transition-colors ${sched?.enabled ? "bg-red-600" : "bg-gray-300 dark:bg-slate-700"}`}>
+            <span className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform ${sched?.enabled ? "translate-x-5" : ""}`} />
+          </button>
+        </div>
+        {sched?.enabled && (
+          <div className="mt-4 flex flex-wrap items-center gap-3">
+            <select value={sched.interval} onChange={e => saveSched({ interval: e.target.value })}
+              className="text-sm border border-gray-200 dark:border-slate-700 rounded-lg bg-white dark:bg-slate-800 text-gray-700 dark:text-slate-200 px-2.5 py-1.5 focus:outline-none focus:ring-1 focus:ring-red-500">
+              <option value="daily">Every day</option>
+              <option value="weekly">Every week (Sunday)</option>
+            </select>
+            <span className="text-sm text-gray-400">at</span>
+            <select value={sched.hour} onChange={e => saveSched({ hour: parseInt(e.target.value, 10) })}
+              className="text-sm border border-gray-200 dark:border-slate-700 rounded-lg bg-white dark:bg-slate-800 text-gray-700 dark:text-slate-200 px-2.5 py-1.5 focus:outline-none focus:ring-1 focus:ring-red-500">
+              {Array.from({ length: 24 }).map((_, h) => <option key={h} value={h}>{String(h).padStart(2, "0")}:00</option>)}
+            </select>
+            {sched.next_run ? <span className="text-xs text-gray-400">Next run {new Date(sched.next_run * 1000).toLocaleString()}</span> : null}
+          </div>
+        )}
       </div>
     </div>
   );

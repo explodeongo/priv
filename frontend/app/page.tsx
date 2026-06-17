@@ -51,6 +51,7 @@ function sourceTier(s: Source): { label: string; cls: string; dot: string; icon:
   };
 }
 
+interface Conf { level?: string; score?: number; strong?: number }
 interface Message {
   role: "user" | "assistant";
   content: string;
@@ -58,6 +59,29 @@ interface Message {
   latency_ms?: number;
   error?: boolean;
   cached?: boolean;
+  confidence?: Conf;
+}
+
+// Small grounding-strength meter shown next to an answer's sources.
+function ConfidenceBadge({ c }: { c?: Conf }) {
+  if (!c || !c.level) return null;
+  const map: Record<string, { label: string; cls: string; bars: number }> = {
+    high:   { label: "High confidence",   cls: "text-emerald-600 dark:text-emerald-400", bars: 3 },
+    medium: { label: "Medium confidence", cls: "text-amber-600 dark:text-amber-400",     bars: 2 },
+    low:    { label: "Limited grounding",  cls: "text-gray-400 dark:text-slate-500",      bars: 1 },
+  };
+  const m = map[c.level] || map.low;
+  const title = `${m.label}${c.strong ? ` · ${c.strong} strong match${c.strong === 1 ? "" : "es"}` : ""}`;
+  return (
+    <span className={`inline-flex items-center gap-1.5 text-xs font-medium ${m.cls}`} title={title}>
+      <span className="flex items-end gap-0.5" aria-hidden>
+        {[1, 2, 3].map(i => (
+          <span key={i} className={`w-1 rounded-sm ${i <= m.bars ? "bg-current" : "bg-gray-200 dark:bg-slate-700"}`} style={{ height: `${i * 3 + 2}px` }} />
+        ))}
+      </span>
+      {m.label}
+    </span>
+  );
 }
 
 const SUGGESTED = [
@@ -154,13 +178,13 @@ function renderMarkdown(text: string, sources: Source[] = [], onCite?: (n: numbe
 }
 
 function inlineFormat(text: string, sources: Source[] = [], onCite?: (n: number) => void): React.ReactNode {
-  const parts = text.split(/(`[^`]+`|\*\*[^*]+\*\*|\[\d+(?:\s*,\s*\d+)*\])/g);
+  const parts = text.split(/(`[^`]+`|\*\*[^*]+\*\*|\[(?:Sources?\s+)?\d+(?:\s*,\s*\d+)*\])/g);
   return parts.map((part, i) => {
     if (part.startsWith("`") && part.endsWith("`"))
       return <code key={i} className="bg-gray-100 dark:bg-slate-700 text-red-700 dark:text-red-300 font-mono text-xs px-1.5 py-0.5 rounded">{part.slice(1, -1)}</code>;
     if (part.startsWith("**") && part.endsWith("**"))
       return <strong key={i} className="font-semibold text-gray-900 dark:text-slate-100">{part.slice(2, -2)}</strong>;
-    const cite = part.match(/^\[(\d+(?:\s*,\s*\d+)*)\]$/);
+    const cite = part.match(/^\[(?:Sources?\s+)?(\d+(?:\s*,\s*\d+)*)\]$/);
     if (cite) {
       const nums = cite[1].split(",").map(s => parseInt(s.trim(), 10));
       return (
@@ -169,10 +193,18 @@ function inlineFormat(text: string, sources: Source[] = [], onCite?: (n: number)
             const src = sources[n - 1];
             if (!src) return <span key={j} className="text-[10px] text-gray-400">[{n}]</span>;
             return (
-              <button key={j} onClick={() => onCite?.(n)} title={stripMd(src.name)}
-                className="text-[10px] font-semibold text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-500/15 hover:bg-red-100 dark:hover:bg-red-500/25 border border-red-200 dark:border-red-500/30 rounded px-1 leading-tight transition-colors">
-                {n}
-              </button>
+              <span key={j} className="relative group/cite inline-block">
+                <button onClick={() => onCite?.(n)}
+                  className="text-[10px] font-semibold text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-500/15 hover:bg-red-100 dark:hover:bg-red-500/25 border border-red-200 dark:border-red-500/30 rounded px-1 leading-tight transition-colors">
+                  {n}
+                </button>
+                <span className="pointer-events-none absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 z-50 w-72 opacity-0 group-hover/cite:opacity-100 transition-opacity duration-150">
+                  <span className="block rounded-lg bg-slate-900 dark:bg-slate-800 border border-slate-700 shadow-xl p-2.5 text-left">
+                    <span className="block text-[11px] font-semibold text-red-300 mb-1 truncate" style={{ textTransform: "none" }}>{stripMd(src.name)}{src.file ? ` · ${src.file}` : ""}</span>
+                    <span className="block text-[11px] font-normal text-slate-300 leading-relaxed line-clamp-4" style={{ whiteSpace: "normal", textTransform: "none" }}>{src.preview}</span>
+                  </span>
+                </span>
+              </span>
             );
           })}
         </span>
@@ -392,9 +424,11 @@ export default function Home() {
     let hadError = false;
     let doneSources: Source[] | undefined;
     let doneLatency: number | undefined;
+    let doneConfidence: Conf | undefined;
+    let lastFlush = 0;   // throttle markdown re-renders during streaming (perf on slower CPUs)
     const save = () => persistConvo([...prior,
       { role: "user", content: question },
-      { role: "assistant", content: acc, sources: doneSources, latency_ms: doneLatency }]);
+      { role: "assistant", content: acc, sources: doneSources, latency_ms: doneLatency, confidence: doneConfidence }]);
 
     try {
       const res = await fetch(`${API}/query/stream`, {
@@ -420,8 +454,8 @@ export default function Home() {
           let evt: any;
           try { evt = JSON.parse(line); } catch { continue; }
           if (evt.type === "context")    { setTrace({ specs: evt.specs || [], sources: evt.sources || [] }); }
-          else if (evt.type === "token") { acc += evt.text; setLast({ content: acc }); }
-          else if (evt.type === "done")  { doneSources = evt.sources; doneLatency = evt.latency_ms; setLast({ sources: evt.sources, latency_ms: evt.latency_ms, cached: !!evt.cached }); }
+          else if (evt.type === "token") { acc += evt.text; const now = Date.now(); if (now - lastFlush > 66) { lastFlush = now; setLast({ content: acc }); } }
+          else if (evt.type === "done")  { doneSources = evt.sources; doneLatency = evt.latency_ms; doneConfidence = evt.confidence; setLast({ content: acc, sources: evt.sources, latency_ms: evt.latency_ms, cached: !!evt.cached, confidence: evt.confidence }); }
           else if (evt.type === "error") { acc = evt.text; hadError = true; setLast({ content: acc, error: true }); }
         }
       }
@@ -639,6 +673,12 @@ export default function Home() {
 
                   {prefs.showSrc && msg.sources && msg.sources.length > 0 && (
                     <div className="mt-2.5 flex flex-wrap gap-2 items-center">
+                      {msg.confidence?.level && (
+                        <>
+                          <ConfidenceBadge c={msg.confidence} />
+                          <span className="text-gray-300 dark:text-slate-600">·</span>
+                        </>
+                      )}
                       <span className="text-xs text-gray-400 font-medium">Sources:</span>
                       {msg.sources.map((src, si) => {
                         const tier = sourceTier(src);

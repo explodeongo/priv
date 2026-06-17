@@ -129,13 +129,14 @@ def _cache_key(question: str, scope: str, mode: str) -> str:
 def cache_get(question: str, scope: str, mode: str):
     return _cache().get(_cache_key(question, scope, mode))
 
-def cache_put(question: str, scope: str, mode: str, answer: str, sources: list):
+def cache_put(question: str, scope: str, mode: str, answer: str, sources: list, confidence: Optional[dict] = None):
     if not sources:
         return                                   # never cache refusals / unsourced answers
     try:
         with _cache_lock:
             c = _cache()
-            c[_cache_key(question, scope, mode)] = {"answer": answer, "sources": sources, "ts": int(time.time())}
+            c[_cache_key(question, scope, mode)] = {"answer": answer, "sources": sources,
+                                                    "confidence": confidence or {}, "ts": int(time.time())}
             while len(c) > 300:                  # cap — drop oldest
                 c.pop(min(c, key=lambda k: c[k].get("ts", 0)))
             CACHE_FILE.write_text(json.dumps(c))
@@ -305,6 +306,7 @@ def startup_init():
     print("[startup] SynaptDI ready — ChromaDB opens on first request", flush=True)
     if os.getenv("WARM_MODELS", "1") != "0":
         threading.Thread(target=_warm_models, daemon=True).start()
+    threading.Thread(target=_scheduler_loop, daemon=True).start()   # scheduled KB auto-refresh
 
 # ── Vector store ─────────────────────────────────────────────────────────────────
 # Pre-built mapping of "TMF622" → "TMF622-ProductOrdering-v4.0.0.swagger.json"
@@ -391,6 +393,16 @@ def embed(text: str) -> list[float]:
                       json={"model": EMBED_MODEL, "prompt": text}, timeout=30)
     r.raise_for_status()
     return r.json()["embedding"]
+
+from functools import lru_cache
+@lru_cache(maxsize=512)
+def _embed_query_cached(text: str) -> tuple:
+    return tuple(embed(text))
+
+def embed_query(text: str) -> list:
+    """Embedding for a retrieval query, memoised — repeat/Regenerate/same question across
+    users skips the Ollama embed round-trip. Query embeddings are deterministic per model."""
+    return list(_embed_query_cached(text))
 
 def make_chunk_id(file_name: str, idx: int) -> str:
     return "up_" + hashlib.md5(f"{file_name}_{idx}".encode()).hexdigest()[:14]
@@ -874,7 +886,7 @@ class Source(BaseModel):
     name: str; file: str; chunk: int; preview: str; url: str = ""; upload: bool = False
 
 class QueryResponse(BaseModel):
-    answer: str; sources: list; latency_ms: int; chunks_retrieved: int; cached: bool = False
+    answer: str; sources: list; latency_ms: int; chunks_retrieved: int; cached: bool = False; confidence: dict = {}
 
 class FollowupReq(BaseModel):
     question: str = ""
@@ -1160,10 +1172,10 @@ def query(req: QueryRequest, authorization: Optional[str] = Header(None)):
             _log_query(req.question, True, who)
             return QueryResponse(answer=hit["answer"], sources=hit["sources"],
                                  latency_ms=int((time.time()-start)*1000),
-                                 chunks_retrieved=0, cached=True)
+                                 chunks_retrieved=0, cached=True, confidence=hit.get("confidence", {}))
 
     rq = _retrieval_query(req.question, req.history)
-    try:    q_emb = embed(rq)
+    try:    q_emb = embed_query(rq)
     except Exception as e: raise HTTPException(503, f"Embedding failed: {e}")
 
     extra = ""
@@ -1191,10 +1203,11 @@ def query(req: QueryRequest, authorization: Optional[str] = Header(None)):
 
     _log_query(req.question, True, who)
     srcs = build_sources(chunks)
+    conf = _confidence(chunks)
     if not req.history:
-        cache_put(req.question, scope, mode, answer, srcs)
+        cache_put(req.question, scope, mode, answer, srcs, conf)
     return QueryResponse(answer=answer, sources=srcs,
-                         latency_ms=int((time.time()-start)*1000), chunks_retrieved=len(chunks))
+                         latency_ms=int((time.time()-start)*1000), chunks_retrieved=len(chunks), confidence=conf)
 
 
 # ── Query (streaming, token-by-token) ────────────────────────────────────────
@@ -1220,12 +1233,13 @@ def query_stream(req: QueryRequest, authorization: Optional[str] = Header(None))
                 _log_query(req.question, True, who)
                 yield json.dumps({"type": "token", "text": hit["answer"]}) + "\n"
                 yield json.dumps({"type": "done", "sources": hit["sources"], "cached": True,
+                                  "confidence": hit.get("confidence", {}),
                                   "latency_ms": int((time.time() - start) * 1000),
                                   "chunks_retrieved": 0}) + "\n"
             return StreamingResponse(cached_gen(), media_type="application/x-ndjson")
 
     rq = _retrieval_query(req.question, req.history)
-    try:    q_emb = embed(rq)
+    try:    q_emb = embed_query(rq)
     except Exception as e: raise HTTPException(503, f"Embedding failed: {e}")
     extra = ""
     plan = version_diff_plan(req.question, q_emb)
@@ -1243,10 +1257,12 @@ def query_stream(req: QueryRequest, authorization: Optional[str] = Header(None))
                               "latency_ms": int((time.time() - start) * 1000),
                               "chunks_retrieved": 0}) + "\n"
             return
+        conf = _confidence(chunks)
         # Tell the client what we're reading before the slow generation starts.
         yield json.dumps({"type": "context",
                           "sources": _ordered_sources(chunks)[0][:6],
-                          "specs":   _unique_specs(chunks)[:6]}) + "\n"
+                          "specs":   _unique_specs(chunks)[:6],
+                          "confidence": conf}) + "\n"
         acc = ""
         try:
             for frag in stream_ollama(build_prompt(req.question, chunks, guarded=not confident, history=req.history, extra=extra), model, npred):
@@ -1258,8 +1274,9 @@ def query_stream(req: QueryRequest, authorization: Optional[str] = Header(None))
         srcs = [] if acc.lower().strip().startswith(NO_INFO_PREFIX) else build_sources(chunks)
         _log_query(req.question, bool(srcs), who)
         if not req.history:
-            cache_put(req.question, scope, mode, acc, srcs)
+            cache_put(req.question, scope, mode, acc, srcs, conf)
         yield json.dumps({"type": "done", "sources": srcs,
+                          "confidence": conf if srcs else {},
                           "latency_ms": int((time.time() - start) * 1000),
                           "chunks_retrieved": len(chunks)}) + "\n"
 
@@ -1462,6 +1479,20 @@ def document_file(file: str, download: bool = False):
     disp  = "attachment" if download else "inline"
     return FileResponse(str(path), media_type=media,
                         headers={"Content-Disposition": f'{disp}; filename="{path.name}"'})
+
+def _confidence(chunks: list) -> dict:
+    """How well-grounded an answer is, from retrieval distances (cosine; lower = better).
+    Returns {level: high|medium|low, score: 0-100, strong: N} for a UI trust indicator."""
+    if not chunks:
+        return {"level": "low", "score": 0, "strong": 0}
+    dists  = sorted(c.get("distance", 1.0) for c in chunks)
+    best   = dists[0]
+    strong = sum(1 for d in dists if d < 0.34)        # chunks that match strongly (cf. DOMAIN_GUARD_DIST)
+    score  = max(0, min(100, round((0.60 - best) / 0.40 * 100)))   # 0.20→100, 0.60→0
+    if   best < 0.33 and strong >= 2: level = "high"
+    elif best < 0.43:                 level = "medium"
+    else:                             level = "low"
+    return {"level": level, "score": score, "strong": strong}
 
 def _categorize(*hints) -> str:
     """Best-effort domain bucket for a USER-ADDED source (defaults to 'Other')."""
@@ -1668,9 +1699,10 @@ def list_conversations(user: dict = Depends(current_user)):
     convos = _load_convos(user["id"])
     return {"conversations": sorted(
         [{"id": c["id"], "title": c.get("title", "New chat"),
-          "updated": c.get("updated", 0), "count": len(c.get("messages", []))}
+          "updated": c.get("updated", 0), "count": len(c.get("messages", [])),
+          "pinned": bool(c.get("pinned"))}
          for c in convos],
-        key=lambda x: -x["updated"])}
+        key=lambda x: (not x["pinned"], -x["updated"]))}   # pinned first, then most recent
 
 @app.get("/conversations/{cid}")
 def get_conversation(cid: str, user: dict = Depends(current_user)):
@@ -1695,13 +1727,21 @@ def update_conversation(cid: str, body: dict, user: dict = Depends(current_user)
     convos = _load_convos(user["id"])
     for c in convos:
         if c["id"] == cid:
-            if isinstance(body.get("messages"), list):
+            changed_msgs = isinstance(body.get("messages"), list)
+            if changed_msgs:
                 c["messages"] = body["messages"][:200]
-            if body.get("title"):
+            if body.get("rename"):                                  # explicit manual rename — sticks
+                c["title"] = (str(body.get("title") or "").strip() or "Untitled")[:80]
+                c["custom_title"] = True
+            elif body.get("title") and not c.get("custom_title"):    # auto title from 1st message
                 c["title"] = str(body["title"])[:80]
-            c["updated"] = int(time.time())
+            if "pinned" in body:
+                c["pinned"] = bool(body["pinned"])
+            if changed_msgs:                                         # only real activity bumps recency
+                c["updated"] = int(time.time())
             _save_convos(user["id"], convos)
-            return c
+            return {"id": c["id"], "title": c["title"], "pinned": bool(c.get("pinned")),
+                    "updated": c.get("updated", 0), "count": len(c.get("messages", []))}
     raise HTTPException(404, "Conversation not found")
 
 @app.delete("/conversations/{cid}")
@@ -1893,6 +1933,28 @@ def get_analytics(_admin: dict = Depends(require_admin)):
         },
     }
 
+def _kb_refresh_job(mode: str = "selective", domain: Optional[str] = None):
+    """Pull upstream + update the index. Runs synchronously (callers thread it).
+    Shared by the manual /admin/refresh-kb endpoint and the scheduled auto-refresh."""
+    global _spec_map, _spec_names
+    PROCESSING_STATUS["__kb_refresh__"] = {"status": "processing", "mode": mode, "domain": domain or "all"}
+    try:
+        url_map = ingest.download_data(update=True)         # pull upstream changes
+        if mode == "full" and not domain:
+            result = {"chunks": ingest.build_index(url_map)}
+        else:
+            result = ingest.sync_index(url_map, domain=domain or None)   # only changed files
+        with _chroma_lock:                     # force re-open of the updated collection
+            reset_store()
+            _spec_map = None; _spec_names = []
+        _KB_PATHS.clear()                      # KB files changed → rebuild preview path index lazily
+        cache_clear()
+        PROCESSING_STATUS["__kb_refresh__"] = {"status": "indexed", "mode": mode, "domain": domain or "all", **result}
+        return result
+    except Exception as e:
+        PROCESSING_STATUS["__kb_refresh__"] = {"status": "failed", "error": str(e)[:200]}
+        raise
+
 @app.post("/admin/refresh-kb")
 def refresh_kb(mode: str = "selective", domain: str = "", _admin: dict = Depends(require_admin)):
     """Re-pull the TM Forum source repos and update the index.
@@ -1905,25 +1967,7 @@ def refresh_kb(mode: str = "selective", domain: str = "", _admin: dict = Depends
         mode = "selective"
     if PROCESSING_STATUS.get("__kb_refresh__", {}).get("status") == "processing":
         return {"status": "processing"}
-    def _run():
-        global _spec_map, _spec_names
-        PROCESSING_STATUS["__kb_refresh__"] = {"status": "processing", "mode": mode, "domain": domain or "all"}
-        try:
-            url_map = ingest.download_data(update=True)     # pull upstream changes
-            if mode == "full":
-                n = ingest.build_index(url_map)
-                result = {"chunks": n}
-            else:
-                result = ingest.sync_index(url_map, domain=domain or None)   # only changed files
-            with _chroma_lock:                 # force re-open of the updated collection
-                reset_store()
-                _spec_map = None; _spec_names = []
-            _KB_PATHS.clear()                  # KB files changed → rebuild preview path index lazily
-            cache_clear()
-            PROCESSING_STATUS["__kb_refresh__"] = {"status": "indexed", "mode": mode, "domain": domain or "all", **result}
-        except Exception as e:
-            PROCESSING_STATUS["__kb_refresh__"] = {"status": "failed", "error": str(e)[:200]}
-    threading.Thread(target=_run, daemon=True).start()
+    threading.Thread(target=lambda: _kb_refresh_job(mode, domain or None), daemon=True).start()
     return {"status": "processing", "mode": mode, "domain": domain or "all"}
 
 class RefreshSourceReq(BaseModel):
@@ -1952,3 +1996,66 @@ def refresh_source(req: RefreshSourceReq, background_tasks: BackgroundTasks, _ad
 @app.get("/admin/refresh-kb/status")
 def refresh_kb_status(_admin: dict = Depends(require_admin)):
     return PROCESSING_STATUS.get("__kb_refresh__", {"status": "idle", "chunks": 0})
+
+# ── Scheduled auto-refresh ───────────────────────────────────────────────────────
+SCHED_FILE = STORAGE_DIR / "refresh_schedule.json"
+
+def _load_sched() -> dict:
+    base = {"enabled": False, "interval": "weekly", "hour": 3, "last_run": 0, "next_run": 0}
+    if SCHED_FILE.exists():
+        try:    base.update(json.loads(SCHED_FILE.read_text()))
+        except Exception: pass
+    return base
+
+def _save_sched(s: dict):
+    try:    SCHED_FILE.write_text(json.dumps(s, indent=2))
+    except Exception: pass
+
+def _next_run_ts(s: dict) -> int:
+    import datetime
+    now  = datetime.datetime.now()
+    hour = max(0, min(23, int(s.get("hour", 3))))
+    target = now.replace(hour=hour, minute=0, second=0, microsecond=0)
+    if s.get("interval") == "weekly":
+        days = (6 - now.weekday()) % 7          # 6 = Sunday
+        target += datetime.timedelta(days=days)
+        if target <= now: target += datetime.timedelta(days=7)
+    else:                                        # daily
+        if target <= now: target += datetime.timedelta(days=1)
+    return int(target.timestamp())
+
+def _scheduler_loop():
+    while True:
+        try:
+            s = _load_sched()
+            if s.get("enabled") and s.get("next_run", 0) and time.time() >= s["next_run"]:
+                if PROCESSING_STATUS.get("__kb_refresh__", {}).get("status") != "processing":
+                    print("[scheduler] running scheduled KB refresh")
+                    try:    _kb_refresh_job("selective", None)
+                    except Exception as e: print(f"[scheduler] refresh failed: {e}")
+                    s = _load_sched()
+                    s["last_run"] = int(time.time())
+                    s["next_run"] = _next_run_ts(s)
+                    _save_sched(s)
+        except Exception as e:
+            print(f"[scheduler] loop error: {e}")
+        time.sleep(300)                          # check every 5 minutes
+
+class SchedReq(BaseModel):
+    enabled: bool = False
+    interval: str = "weekly"
+    hour: int = 3
+
+@app.get("/admin/refresh-schedule")
+def get_refresh_schedule(_admin: dict = Depends(require_admin)):
+    return _load_sched()
+
+@app.put("/admin/refresh-schedule")
+def set_refresh_schedule(req: SchedReq, _admin: dict = Depends(require_admin)):
+    s = _load_sched()
+    s["enabled"]  = bool(req.enabled)
+    s["interval"] = "daily" if req.interval == "daily" else "weekly"
+    s["hour"]     = max(0, min(23, int(req.hour)))
+    s["next_run"] = _next_run_ts(s) if s["enabled"] else 0
+    _save_sched(s)
+    return s
