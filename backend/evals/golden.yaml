@@ -1,0 +1,64 @@
+# SynaptDI golden evaluation set — STARTER (expand over time).
+# Each case asserts answer correctness (must_include / must_not_include) and/or
+# citation correctness (expect_specs). Keep assertions things you are confident are
+# true for the indexed TM Forum corpus. Run with:  python eval.py
+#
+# Tip: when a 👎 comes in from real usage, turn it into a case here so it never regresses.
+
+- id: tmf622-required-fields
+  question: "What mandatory fields does TMF622 Product Order require?"
+  expect_specs: [TMF622]
+  must_include: [productOrderItem]
+  must_not_include: [EventSubscription]      # the bug we fixed — must never come back
+  min_sources: 1
+
+- id: tmf641-required-fields
+  question: "What are the mandatory fields to create a TMF641 Service Order?"
+  expect_specs: [TMF641]
+  must_include: [serviceOrderItem]
+
+- id: tmf637-product-inventory
+  question: "What does the TMF637 API manage?"
+  expect_specs: [TMF637]
+  must_include: [inventory]
+
+- id: tmf638-service-inventory
+  question: "What does TMF638 manage?"
+  expect_specs: [TMF638]
+  must_include: [service, inventory]
+
+- id: tmf629-customer
+  question: "What is the TMF629 API used for?"
+  expect_specs: [TMF629]
+  must_include: [customer]
+
+- id: tmf632-party
+  question: "What is the TMF632 Party Management API for?"
+  expect_specs: [TMF632]
+  must_include: [party]
+
+- id: tmf666-account
+  question: "What does the TMF666 Account Management API cover?"
+  expect_specs: [TMF666]
+  must_include: [account]
+
+- id: tmf620-vs-tmf633
+  question: "What is the difference between TMF620 and TMF633?"
+  expect_specs: [TMF620, TMF633]
+  must_include: [catalog]
+
+- id: pagination
+  question: "How do I paginate results in TM Forum Open APIs?"
+  must_include: [offset, limit]
+
+- id: sparse-fieldsets
+  question: "How do I return only specific attributes from a TM Forum API?"
+  must_include: [fields]
+
+- id: sorting
+  question: "How do I sort results in a TM Forum Open API?"
+  must_include: [sort]
+
+- id: guardrail-offtopic
+  question: "What is the capital of France?"
+  must_not_include: [Paris]                  # out of domain — must refuse, not answer

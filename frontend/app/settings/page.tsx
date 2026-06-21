@@ -181,7 +181,7 @@ function ProfileTab() {
                 className={`w-full border rounded-xl px-3.5 py-2.5 text-sm transition-all focus:outline-none ${
                   f.disabled
                     ? "border-gray-100 dark:border-slate-800 bg-gray-50 dark:bg-slate-800 text-gray-400 cursor-not-allowed"
-                    : "border-gray-200 dark:border-slate-700 bg-white text-gray-900 dark:text-slate-100 placeholder-gray-400 focus:ring-2 focus:ring-red-500 focus:border-transparent"
+                    : "border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-900 dark:text-slate-100 placeholder-gray-400 focus:ring-2 focus:ring-red-500 focus:border-transparent"
                 }`} />
               {f.disabled && <p className="text-[11px] text-gray-400 mt-1">Contact your admin to change email</p>}
             </div>
@@ -421,7 +421,7 @@ function PreferencesTab() {
               <p className="text-xs text-gray-400 mt-0.5">Number of document chunks to retrieve for each question</p>
             </div>
             <select value={topK} onChange={e => setTopK(e.target.value)}
-              className="border border-gray-200 dark:border-slate-700 rounded-lg px-3 py-1.5 text-sm text-gray-700 dark:text-slate-300 focus:outline-none focus:ring-2 focus:ring-red-500 bg-white min-w-[110px]">
+              className="border border-gray-200 dark:border-slate-700 rounded-lg px-3 py-1.5 text-sm text-gray-700 dark:text-slate-300 focus:outline-none focus:ring-2 focus:ring-red-500 bg-white dark:bg-slate-800 min-w-[110px]">
               <option value="3">3 chunks</option>
               <option value="5">5 chunks</option>
               <option value="10">10 chunks</option>
@@ -481,11 +481,11 @@ export default function SettingsPage() {
         </header>
 
         {/* Tab bar — consistent underline style */}
-        <div className="flex border-b border-gray-200 dark:border-slate-700 bg-white px-6 flex-shrink-0">
+        <div className="flex border-b border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-6 flex-shrink-0">
           {tabs.map(t => (
             <button key={t.id} onClick={() => setTab(t.id)}
               className={`px-5 py-3.5 text-sm font-medium border-b-2 transition-all -mb-px ${
-                tab === t.id ? "border-red-600 text-red-600" : "border-transparent text-gray-500 dark:text-slate-400 hover:text-gray-800 dark:text-slate-200"
+                tab === t.id ? "border-red-600 text-red-600" : "border-transparent text-gray-500 dark:text-slate-400 hover:text-gray-800 dark:hover:text-slate-200"
               }`}>
               {t.label}
             </button>

@@ -97,6 +97,9 @@ function ManagementTab({ user }: { user: { role: string } | null }) {
   const [folders, setFolders]         = useState<{ name: string; count: number }[]>([]);
   const [kbBusy, setKbBusy]           = useState<string | null>(null);   // which KB domain is refreshing ("all" = whole KB)
   const [preview, setPreview]         = useState<{ file: string; name: string; scope?: "all" | "kb" | "docs" } | null>(null);  // in-app document reader
+  const [renamingFolder, setRenamingFolder] = useState<string | null>(null);   // inline folder rename
+  const [folderRenameVal, setFolderRenameVal] = useState("");
+  const cancelRenameRef = useRef(false);   // so Escape cancels without the blur committing
 
   const canUpload = user?.role === "admin" || user?.role === "analyst";
   const isAdmin   = user?.role === "admin";   // KB refresh pulls upstream → admin-only
@@ -294,6 +297,19 @@ function ManagementTab({ user }: { user: { role: string } | null }) {
       toast(d.refreshed ? `Refreshing ${d.refreshed} source(s)…` : (d.note || "Nothing to refresh here"), "info");
       fetchDocs();
     } catch { toast("Failed to refresh folder", "error"); }
+  };
+  const renameFolder = async (oldName: string, raw: string) => {
+    const name = (raw || "").trim();
+    setRenamingFolder(null);
+    if (!name || name === oldName) return;
+    setDocs(prev => prev.map(d => (d.folder === oldName ? { ...d, folder: name } : d)));   // optimistic
+    setFolders(prev => prev.map(f => (f.name === oldName ? { ...f, name } : f)));
+    try {
+      const r = await fetch(`${API}/folders/${encodeURIComponent(oldName)}`, {
+        method: "PUT", headers: authHdr(), body: JSON.stringify({ name }) });
+      if (!r.ok) { const e = await r.json().catch(() => ({})); throw new Error(e.detail || "Rename failed"); }
+      toast(`Folder renamed to "${name}"`, "success"); fetchDocs();
+    } catch (e: any) { toast(e.message || "Failed to rename folder", "error"); fetchDocs(); }
   };
 
   // Pull the latest from TM Forum / ODA upstream and re-embed only what changed.
@@ -507,14 +523,35 @@ function ManagementTab({ user }: { user: { role: string } | null }) {
                   <tr className="bg-gray-50 dark:bg-slate-800/60 select-none group/fold">
                     <td colSpan={4} className="px-5 py-2">
                       <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-2 text-sm font-semibold text-gray-700 dark:text-slate-300 cursor-pointer" onClick={() => toggleCat(g.cat)}>
-                          <svg className={`w-3.5 h-3.5 text-gray-400 transition-transform ${collapsedCats.has(g.cat) ? "" : "rotate-90"}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><polyline points="9 18 15 12 9 6"/></svg>
-                          <svg className="w-4 h-4 text-amber-500" fill="currentColor" viewBox="0 0 24 24"><path d="M10 4H4a2 2 0 00-2 2v12a2 2 0 002 2h16a2 2 0 002-2V8a2 2 0 00-2-2h-8l-2-2z"/></svg>
-                          {g.cat}
-                          <span className="text-xs font-normal text-gray-400">· {g.docs.length} {g.docs.length === 1 ? "source" : "sources"}</span>
+                        <div className="flex items-center gap-2 text-sm font-semibold text-gray-700 dark:text-slate-300 min-w-0">
+                          <svg onClick={() => toggleCat(g.cat)} className={`w-3.5 h-3.5 flex-shrink-0 text-gray-400 cursor-pointer transition-transform ${collapsedCats.has(g.cat) ? "" : "rotate-90"}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><polyline points="9 18 15 12 9 6"/></svg>
+                          <svg className="w-4 h-4 flex-shrink-0 text-amber-500" fill="currentColor" viewBox="0 0 24 24"><path d="M10 4H4a2 2 0 00-2 2v12a2 2 0 002 2h16a2 2 0 002-2V8a2 2 0 00-2-2h-8l-2-2z"/></svg>
+                          {renamingFolder === g.cat ? (
+                            <input autoFocus value={folderRenameVal}
+                              onChange={e => setFolderRenameVal(e.target.value)}
+                              onClick={e => e.stopPropagation()}
+                              onKeyDown={e => {
+                                if (e.key === "Enter") { e.preventDefault(); (e.target as HTMLInputElement).blur(); }
+                                if (e.key === "Escape") { cancelRenameRef.current = true; setRenamingFolder(null); }
+                              }}
+                              onBlur={() => {
+                                if (cancelRenameRef.current) { cancelRenameRef.current = false; setRenamingFolder(null); return; }
+                                renameFolder(g.cat, folderRenameVal);
+                              }} maxLength={60}
+                              className="bg-white dark:bg-slate-900 border border-red-500 rounded px-1.5 py-0.5 text-sm text-gray-800 dark:text-slate-100 focus:outline-none focus:ring-1 focus:ring-red-500 max-w-[180px]" />
+                          ) : (
+                            <>
+                              <span className="cursor-pointer truncate" onClick={() => toggleCat(g.cat)}>{g.cat}</span>
+                              <span className="text-xs font-normal text-gray-400 flex-shrink-0">· {g.docs.length} {g.docs.length === 1 ? "source" : "sources"}</span>
+                            </>
+                          )}
                         </div>
-                        {canUpload && g.cat !== "Uncategorized" && (
+                        {canUpload && g.cat !== "Uncategorized" && renamingFolder !== g.cat && (
                           <div className="flex items-center gap-1 opacity-0 group-hover/fold:opacity-100 transition-opacity">
+                            <button onClick={() => { setRenamingFolder(g.cat); setFolderRenameVal(g.cat); }} title="Rename folder"
+                              className="p-1 rounded-lg text-gray-400 hover:text-gray-700 dark:hover:text-slate-200 hover:bg-gray-100 dark:hover:bg-slate-700 transition-colors">
+                              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
+                            </button>
                             <button onClick={() => refreshFolder(g.cat)} title="Refresh all repo/web sources in this folder"
                               className="p-1 rounded-lg text-gray-400 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-500/10 transition-colors">
                               <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/></svg>

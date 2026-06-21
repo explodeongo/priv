@@ -326,7 +326,9 @@ export default function Home() {
   const [followups, setFollowups] = useState<string[]>([]);
   const [coverage, setCoverage] = useState<Coverage | null>(null);
   const [showWelcome, setShowWelcome] = useState(false);
-  const { activeId, setActiveId, refresh: refreshConvos, loadSignal, consume } = useConvos();
+  const { activeId, setActiveId, refresh: refreshConvos, loadSignal, consume, projects, activeProjectId } = useConvos();
+  const activeProject = projects.find(p => p.id === activeProjectId) || null;
+  const projectInstructions = activeProject?.instructions || "";
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef  = useRef<HTMLTextAreaElement>(null);
   const abortRef  = useRef<AbortController | null>(null);
@@ -356,7 +358,7 @@ export default function Home() {
           method: "PUT", headers: authH(true), body: JSON.stringify({ messages: msgs, title }) });
       } else {
         const r = await fetch(`${API}/conversations`, {
-          method: "POST", headers: authH(true), body: JSON.stringify({ messages: msgs, title }) });
+          method: "POST", headers: authH(true), body: JSON.stringify({ messages: msgs, title, project_id: activeProjectId || "" }) });
         if (r.ok) setActiveId((await r.json()).id);
       }
       refreshConvos();
@@ -434,7 +436,7 @@ export default function Home() {
       const res = await fetch(`${API}/query/stream`, {
         method: "POST",
         headers: authH(true),
-        body: JSON.stringify({ question, top_k: prefs.topK, scope, history, mode, no_cache: fresh }),
+        body: JSON.stringify({ question, top_k: prefs.topK, scope, history, mode, no_cache: fresh, project_instructions: projectInstructions }),
         signal: controller.signal,
       });
       if (!res.ok || !res.body) throw new Error(`API error ${res.status}`);
@@ -612,6 +614,12 @@ export default function Home() {
                     <div className="flex items-center gap-1.5 text-xs text-gray-400 dark:text-slate-400 bg-gray-50 dark:bg-slate-800/60 border border-gray-200 dark:border-slate-700 px-3 py-1.5 rounded-full">
                       <span className="w-1.5 h-1.5 rounded-full bg-green-500" />
                       {stats.chunks_indexed.toLocaleString()} chunks indexed and ready
+                    </div>
+                  )}
+                  {activeProject && (
+                    <div className="flex items-center gap-1.5 text-xs font-medium text-violet-600 dark:text-violet-300 bg-violet-50 dark:bg-violet-500/10 border border-violet-200 dark:border-violet-500/30 px-3 py-1.5 rounded-full">
+                      <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.8"><path strokeLinecap="round" strokeLinejoin="round" d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V7z"/></svg>
+                      Project · {activeProject.name}{activeProject.instructions ? " · memory active" : ""}
                     </div>
                   )}
                 </div>

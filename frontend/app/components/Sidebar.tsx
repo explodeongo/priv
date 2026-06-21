@@ -4,7 +4,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { useState, useEffect } from "react";
 import { useAuth } from "./AuthProvider";
 import { useBranding } from "./BrandingContext";
-import { useConvos } from "./ConversationContext";
+import { useConvos, type Convo, type Project } from "./ConversationContext";
 import { useTheme } from "./ThemeContext";
 
 // ── Icons ────────────────────────────────────────────────────────────────────
@@ -62,11 +62,18 @@ const IMonitor = () => (
 );
 
 // ── Nav config ───────────────────────────────────────────────────────────────
+const ICheckSpec = () => (
+  <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/>
+  </svg>
+);
+
 const NAV = [
-  { label: "Chat",      href: "/",          icon: <IChat />,     exact: true  },
-  { label: "Documents", href: "/documents", icon: <IDocs />,     exact: false },
-  { label: "Admin",     href: "/admin",     icon: <IAdmin />,    exact: false, adminOnly: true },
-  { label: "Settings",  href: "/settings",  icon: <ISettings />, exact: false },
+  { label: "Chat",        href: "/",            icon: <IChat />,      exact: true  },
+  { label: "Documents",   href: "/documents",   icon: <IDocs />,      exact: false },
+  { label: "Conformance", href: "/conformance", icon: <ICheckSpec />, exact: false },
+  { label: "Admin",       href: "/admin",       icon: <IAdmin />,     exact: false, adminOnly: true },
+  { label: "Settings",    href: "/settings",    icon: <ISettings />,  exact: false },
 ];
 
 // ── Shared avatar bubble ──────────────────────────────────────────────────────
@@ -95,8 +102,62 @@ export default function Sidebar() {
   const router = useRouter();
   const { user, logout } = useAuth();
   const { branding } = useBranding();
-  const { convos, activeId, open, startNew, remove } = useConvos();
+  const { convos, activeId, open, startNew, remove, rename, togglePin,
+          projects, createProject, updateProject, deleteProject } = useConvos();
   const { theme, cycle } = useTheme();
+  const [convoQuery, setConvoQuery] = useState("");
+  const [renamingId, setRenamingId] = useState<string | null>(null);
+  const [renameVal, setRenameVal] = useState("");
+  const [expandedProjects, setExpandedProjects] = useState<Set<string>>(new Set());
+  const [editingProject, setEditingProject] = useState<Project | null>(null);
+  const [projInstr, setProjInstr] = useState("");
+  const startRename = (id: string, title: string) => { setRenamingId(id); setRenameVal(title); };
+  const commitRename = () => { if (renamingId) rename(renamingId, renameVal.trim() || "Untitled"); setRenamingId(null); };
+  const toggleProject = (id: string) => setExpandedProjects(s => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
+  const newProject = async () => {
+    const name = (prompt("New project name:") || "").trim();
+    if (!name) return;
+    const p = await createProject(name);
+    if (p) setExpandedProjects(s => { const n = new Set(s); n.add(p.id); return n; });
+  };
+  const openInstr = (p: Project) => { setEditingProject(p); setProjInstr(p.instructions || ""); };
+  const saveInstr = () => { if (editingProject) updateProject(editingProject.id, { instructions: projInstr }); setEditingProject(null); };
+
+  // One chat row — shared by the Projects section and the Recent/Pinned list.
+  const Row = (c: Convo) => {
+    const active = pathname === "/" && c.id === activeId;
+    const editing = renamingId === c.id;
+    return (
+      <div key={c.id} onClick={() => { if (!editing) { open(c.id, c.project_id || null); router.push("/"); } }}
+        className={`group flex items-center gap-1 rounded-lg pl-3 pr-1.5 py-2 text-sm cursor-pointer transition-colors ${
+          active ? "bg-slate-800 text-white" : "text-slate-400 hover:text-white hover:bg-slate-800/70"
+        }`}>
+        {c.pinned && !editing && <svg className="w-3 h-3 flex-shrink-0 text-amber-400/80" fill="currentColor" viewBox="0 0 24 24"><path d="M16 3v2l-1 1v4l3 3v2h-5v5l-1 1-1-1v-5H5v-2l3-3V6L7 5V3z" /></svg>}
+        {editing ? (
+          <input autoFocus value={renameVal} onChange={e => setRenameVal(e.target.value)}
+            onClick={e => e.stopPropagation()}
+            onKeyDown={e => { if (e.key === "Enter") commitRename(); if (e.key === "Escape") setRenamingId(null); }}
+            onBlur={commitRename}
+            className="flex-1 min-w-0 bg-slate-900 border border-red-500 rounded px-1.5 py-0.5 text-sm text-white focus:outline-none" />
+        ) : (
+          <span className="truncate flex-1">{c.title || "Untitled"}</span>
+        )}
+        {!editing && (
+          <div className="flex items-center opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0">
+            <button onClick={e => { e.stopPropagation(); togglePin(c.id, !c.pinned); }} title={c.pinned ? "Unpin" : "Pin"} className="p-1 text-slate-500 hover:text-amber-400">
+              <svg className="w-3.5 h-3.5" fill={c.pinned ? "currentColor" : "none"} viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.8"><path strokeLinecap="round" strokeLinejoin="round" d="M16 3v2l-1 1v4l3 3v2h-5v5l-1 1-1-1v-5H5v-2l3-3V6L7 5V3z" /></svg>
+            </button>
+            <button onClick={e => { e.stopPropagation(); startRename(c.id, c.title || ""); }} title="Rename" className="p-1 text-slate-500 hover:text-white">
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.8"><path strokeLinecap="round" strokeLinejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" /></svg>
+            </button>
+            <button onClick={e => { e.stopPropagation(); remove(c.id); }} title="Delete" className="p-1 text-slate-500 hover:text-red-400">
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.8"><path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+            </button>
+          </div>
+        )}
+      </div>
+    );
+  };
 
   useEffect(() => {
     const load = () => {
@@ -168,23 +229,73 @@ export default function Sidebar() {
               </svg>
               New chat
             </button>
-            <div className="text-[10px] font-bold uppercase tracking-widest text-slate-600 px-3 pt-3 pb-1">Recent</div>
-            <div className="flex-1 overflow-y-auto space-y-0.5 pr-0.5">
-              {convos.length === 0 && <p className="text-xs text-slate-600 px-3 py-1.5">No chats yet.</p>}
-              {convos.map(c => {
-                const active = pathname === "/" && c.id === activeId;
+            {/* Projects — group chats + shared memory */}
+            <div className="mt-3">
+              <div className="flex items-center justify-between px-3 pb-0.5">
+                <span className="text-[10px] font-bold uppercase tracking-widest text-slate-600">Projects</span>
+                <button onClick={newProject} title="New project" className="p-0.5 text-slate-500 hover:text-white transition-colors">
+                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                </button>
+              </div>
+              {projects.length === 0 && <p className="text-[11px] text-slate-600 px-3 pb-1">Create one to group chats + give them shared memory.</p>}
+              {projects.map(p => {
+                const exp = expandedProjects.has(p.id);
+                const pchats = convos.filter(c => (c.project_id || "") === p.id);
                 return (
-                  <div key={c.id} onClick={() => { open(c.id); router.push("/"); }}
-                    className={`group flex items-center justify-between rounded-lg pl-3 pr-2 py-2 text-sm cursor-pointer transition-colors ${
-                      active ? "bg-slate-800 text-white" : "text-slate-400 hover:text-white hover:bg-slate-800/70"
-                    }`}>
-                    <span className="truncate">{c.title || "Untitled"}</span>
-                    <button onClick={e => { e.stopPropagation(); remove(c.id); }}
-                      className="opacity-0 group-hover:opacity-100 text-slate-500 hover:text-red-400 ml-1 flex-shrink-0 transition-opacity" title="Delete chat">×</button>
+                  <div key={p.id}>
+                    <div onClick={() => toggleProject(p.id)}
+                      className="group flex items-center gap-1.5 rounded-lg pl-2 pr-1.5 py-1.5 text-sm cursor-pointer text-slate-300 hover:bg-slate-800/70 transition-colors">
+                      <svg className={`w-3 h-3 flex-shrink-0 text-slate-500 transition-transform ${exp ? "rotate-90" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><polyline points="9 18 15 12 9 6"/></svg>
+                      <svg className="w-4 h-4 flex-shrink-0 text-violet-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.8"><path strokeLinecap="round" strokeLinejoin="round" d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V7z"/></svg>
+                      <span className="truncate flex-1 font-medium">{p.name}</span>
+                      <span className="text-[10px] text-slate-600 group-hover:hidden">{p.count || ""}</span>
+                      <div className="hidden group-hover:flex items-center flex-shrink-0">
+                        <button onClick={e => { e.stopPropagation(); startNew(p.id); router.push("/"); }} title="New chat in this project" className="p-1 text-slate-500 hover:text-white">
+                          <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                        </button>
+                        <button onClick={e => { e.stopPropagation(); openInstr(p); }} title="Project instructions / memory" className="p-1 text-slate-500 hover:text-white">
+                          <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.8"><path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h16M4 18h10"/></svg>
+                        </button>
+                        <button onClick={e => { e.stopPropagation(); if (confirm(`Delete project "${p.name}"? Its chats are kept (moved out of the project).`)) deleteProject(p.id); }} title="Delete project" className="p-1 text-slate-500 hover:text-red-400">
+                          <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.8"><path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+                        </button>
+                      </div>
+                    </div>
+                    {exp && (
+                      <div className="ml-3.5 border-l border-slate-800 pl-1 mb-1">
+                        {pchats.length === 0 && <p className="text-[11px] text-slate-600 px-2 py-1">No chats yet — use the + above</p>}
+                        {pchats.map(Row)}
+                      </div>
+                    )}
                   </div>
                 );
               })}
             </div>
+
+            {convos.filter(c => !c.project_id).length > 4 && (
+              <div className="relative px-1 mt-2">
+                <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-600 pointer-events-none" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" /></svg>
+                <input value={convoQuery} onChange={e => setConvoQuery(e.target.value)} placeholder="Search chats"
+                  className="w-full bg-slate-800/60 border border-slate-700 rounded-lg pl-8 pr-2 py-1.5 text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-red-500" />
+              </div>
+            )}
+
+            {(() => {
+              const ql = convoQuery.trim().toLowerCase();
+              const unfiled = convos.filter(c => !c.project_id);
+              const filtered = unfiled.filter(c => !ql || (c.title || "").toLowerCase().includes(ql));
+              const pinned = filtered.filter(c => c.pinned);
+              const recent = filtered.filter(c => !c.pinned);
+              return (
+                <div className="flex-1 overflow-y-auto space-y-0.5 pr-0.5 mt-1">
+                  {pinned.length > 0 && <div className="text-[10px] font-bold uppercase tracking-widest text-slate-600 px-3 pt-2 pb-1">Pinned</div>}
+                  {pinned.map(Row)}
+                  {recent.length > 0 && <div className="text-[10px] font-bold uppercase tracking-widest text-slate-600 px-3 pt-2 pb-1">Recent</div>}
+                  {recent.map(Row)}
+                  {filtered.length === 0 && <p className="text-xs text-slate-600 px-3 py-1.5">{unfiled.length === 0 ? "No chats yet." : "No matches."}</p>}
+                </div>
+              );
+            })()}
           </div>
         )}
       </nav>
@@ -239,6 +350,23 @@ export default function Sidebar() {
           </div>
         )}
       </div>
+
+      {/* Project instructions / memory editor */}
+      {editingProject && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm" onClick={() => setEditingProject(null)}>
+          <div onClick={e => e.stopPropagation()} className="w-full max-w-md bg-white dark:bg-slate-900 rounded-2xl border border-gray-200 dark:border-slate-700 shadow-2xl p-5">
+            <h3 className="text-sm font-semibold text-gray-900 dark:text-slate-100">Project memory — {editingProject.name}</h3>
+            <p className="text-xs text-gray-400 mt-0.5 mb-3">Standing notes the assistant keeps in mind for every chat in this project. Facts still come from your knowledge base — this just steers the context.</p>
+            <textarea value={projInstr} onChange={e => setProjInstr(e.target.value)} rows={6} maxLength={4000} autoFocus
+              placeholder="e.g. We're migrating from TMF622 v4 to v5 — prefer v5 answers and always flag breaking changes."
+              className="w-full border border-gray-200 dark:border-slate-700 rounded-lg p-2.5 text-sm bg-gray-50 dark:bg-slate-800 text-gray-800 dark:text-slate-100 placeholder-gray-400 focus:outline-none focus:ring-1 focus:ring-red-500 resize-none" />
+            <div className="flex justify-end gap-2 mt-3">
+              <button onClick={() => setEditingProject(null)} className="text-sm px-3 py-1.5 text-gray-500 hover:text-gray-800 dark:hover:text-slate-200">Cancel</button>
+              <button onClick={saveInstr} className="text-sm font-semibold px-4 py-1.5 rounded-lg bg-red-600 hover:bg-red-700 text-white">Save</button>
+            </div>
+          </div>
+        </div>
+      )}
     </aside>
   );
 }

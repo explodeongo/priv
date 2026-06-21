@@ -14,7 +14,10 @@ backend/data/
 backend/storage/*.json
 backend/storage/auth_secret
 backend/storage/conversations/
+backend/storage/projects/
 backend/uploads/
+# Stray runtime dir if the backend is ever started from the repo root (contains auth_secret)
+/storage/
 
 # ───────── Frontend / Next.js ─────────
 frontend/node_modules/

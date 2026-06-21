@@ -73,6 +73,7 @@ BRANDING_FILE = STORAGE_DIR / "branding.json"
 USERS_FILE    = STORAGE_DIR / "users.json"
 CHATCFG_FILE  = STORAGE_DIR / "chat_config.json"
 CONVOS_DIR    = STORAGE_DIR / "conversations"; CONVOS_DIR.mkdir(exist_ok=True)
+PROJECTS_DIR  = STORAGE_DIR / "projects";      PROJECTS_DIR.mkdir(exist_ok=True)
 ANALYTICS_FILE = STORAGE_DIR / "analytics.json"
 FEEDBACK_FILE  = STORAGE_DIR / "feedback.json"
 _analytics_lock = threading.Lock()
@@ -843,6 +844,16 @@ def version_diff_plan(question: str, q_emb: list):
              "context shows — never invent a change.")
     return chunks, extra
 
+def _project_extra(instructions: str) -> str:
+    """Standing project notes/memory → an instruction block prepended to the system prompt
+    so a chat inside a Project carries that project's context. Facts still come from CONTEXT."""
+    t = (instructions or "").strip()
+    if not t:
+        return ""
+    return ("\n\nPROJECT CONTEXT — this chat belongs to a user-created project with these standing "
+            "notes/memory. Keep them in mind and stay consistent with them, but still ground every "
+            "factual claim in the CONTEXT sources below:\n" + t[:2000])
+
 def build_prompt(question: str, chunks: list[dict], guarded: bool, history=None, extra: str = "") -> str:
     sysp = _system_prompt(guarded) + extra
     _, index, _ = _ordered_sources(chunks)
@@ -881,6 +892,7 @@ class QueryRequest(BaseModel):
     standards_filter: Optional[list] = None
     mode:     str           = "deep"  # "deep" = full 8B model · "fast" = small model for quick lookups
     no_cache: bool          = False   # Regenerate sets this → skip the cache read, force a fresh answer
+    project_instructions: str = ""    # standing notes/memory of the project this chat belongs to
 
 class Source(BaseModel):
     name: str; file: str; chunk: int; preview: str; url: str = ""; upload: bool = False
@@ -1192,6 +1204,7 @@ def query(req: QueryRequest, authorization: Optional[str] = Header(None)):
         return QueryResponse(answer=empty, sources=[],
                              latency_ms=int((time.time()-start)*1000), chunks_retrieved=0)
 
+    extra = _project_extra(req.project_instructions) + extra
     try:    answer = generate_answer(build_prompt(req.question, chunks, guarded=not confident, history=req.history, extra=extra), model, npred)
     except Exception as e: raise HTTPException(503, f"Generation failed: {e}")
 
@@ -1248,6 +1261,7 @@ def query_stream(req: QueryRequest, authorization: Optional[str] = Header(None))
         confident, empty = True, ""
     else:
         chunks, confident, empty = retrieve(rq, q_emb, top_k, scope)
+    extra = _project_extra(req.project_instructions) + extra
 
     def gen():
         if not chunks:
@@ -1568,6 +1582,24 @@ def delete_folder(name: str, _admin: dict = Depends(require_admin)):
     save_uploads(docs)
     return {"ok": True, "folders": load_folders()}
 
+@app.put("/folders/{name}")
+def rename_folder(name: str, req: FolderReq, _admin: dict = Depends(require_admin)):
+    """Rename a folder and move all of its documents to the new name."""
+    new = (req.name or "").strip()
+    if not new:                       raise HTTPException(400, "Folder name required")
+    if len(new) > 60:                 raise HTTPException(400, "Folder name too long (max 60)")
+    folders = load_folders()
+    if name not in folders:           raise HTTPException(404, "Folder not found")
+    if new == name:                   return {"ok": True, "folders": load_folders()}
+    if new in folders:                raise HTTPException(409, "A folder with that name already exists")
+    save_folders([new if f == name else f for f in folders])
+    docs = load_uploads()             # carry the folder's documents over to the new name
+    for d in docs:
+        if d.get("folder") == name:
+            d["folder"] = new
+    save_uploads(docs)
+    return {"ok": True, "folders": load_folders()}
+
 @app.post("/documents/{file_name}/folder")
 def move_document(file_name: str, req: MoveReq, _admin: dict = Depends(require_admin)):
     folder = (req.folder or "").strip()
@@ -1700,7 +1732,7 @@ def list_conversations(user: dict = Depends(current_user)):
     return {"conversations": sorted(
         [{"id": c["id"], "title": c.get("title", "New chat"),
           "updated": c.get("updated", 0), "count": len(c.get("messages", [])),
-          "pinned": bool(c.get("pinned"))}
+          "pinned": bool(c.get("pinned")), "project_id": c.get("project_id", "")}
          for c in convos],
         key=lambda x: (not x["pinned"], -x["updated"]))}   # pinned first, then most recent
 
@@ -1717,6 +1749,7 @@ def create_conversation(body: dict, user: dict = Depends(current_user)):
     c = {"id": uuid.uuid4().hex[:12],
          "title": (body.get("title") or "New chat")[:80],
          "messages": body.get("messages") or [],
+         "project_id": body.get("project_id") or "",
          "updated": int(time.time())}
     convos.append(c)
     _save_convos(user["id"], convos)
@@ -1737,10 +1770,13 @@ def update_conversation(cid: str, body: dict, user: dict = Depends(current_user)
                 c["title"] = str(body["title"])[:80]
             if "pinned" in body:
                 c["pinned"] = bool(body["pinned"])
+            if "project_id" in body:                                # assign / remove from a project
+                c["project_id"] = body.get("project_id") or ""
             if changed_msgs:                                         # only real activity bumps recency
                 c["updated"] = int(time.time())
             _save_convos(user["id"], convos)
             return {"id": c["id"], "title": c["title"], "pinned": bool(c.get("pinned")),
+                    "project_id": c.get("project_id", ""),
                     "updated": c.get("updated", 0), "count": len(c.get("messages", []))}
     raise HTTPException(404, "Conversation not found")
 
@@ -1751,6 +1787,75 @@ def delete_conversation(cid: str, user: dict = Depends(current_user)):
     if len(remaining) == len(convos):
         raise HTTPException(404, "Conversation not found")
     _save_convos(user["id"], remaining)
+    return {"ok": True}
+
+# ── Projects (group chats + per-project standing notes / memory) ─────────────────
+def _projects_path(uid: str):
+    return PROJECTS_DIR / f"{re.sub(r'[^A-Za-z0-9_-]', '_', uid)}.json"
+
+def _load_projects(uid: str) -> list:
+    p = _projects_path(uid)
+    if p.exists():
+        try:    return json.loads(p.read_text())
+        except: pass
+    return []
+
+def _save_projects(uid: str, projects: list):
+    _projects_path(uid).write_text(json.dumps(projects, indent=2))
+
+@app.get("/projects")
+def list_projects(user: dict = Depends(current_user)):
+    projects = _load_projects(user["id"])
+    counts: dict = {}
+    for c in _load_convos(user["id"]):
+        pid = c.get("project_id") or ""
+        if pid:
+            counts[pid] = counts.get(pid, 0) + 1
+    return {"projects": sorted(
+        [{"id": p["id"], "name": p.get("name", "Untitled project"),
+          "instructions": p.get("instructions", ""), "updated": p.get("updated", 0),
+          "count": counts.get(p["id"], 0)} for p in projects],
+        key=lambda x: -x["updated"])}
+
+@app.post("/projects")
+def create_project(body: dict, user: dict = Depends(current_user)):
+    name = (body.get("name") or "").strip()
+    if not name:        raise HTTPException(400, "Project name required")
+    if len(name) > 80:  raise HTTPException(400, "Project name too long (max 80)")
+    projects = _load_projects(user["id"])
+    p = {"id": uuid.uuid4().hex[:12], "name": name,
+         "instructions": (body.get("instructions") or "")[:4000], "updated": int(time.time())}
+    projects.append(p)
+    _save_projects(user["id"], projects)
+    return p
+
+@app.put("/projects/{pid}")
+def update_project(pid: str, body: dict, user: dict = Depends(current_user)):
+    projects = _load_projects(user["id"])
+    for p in projects:
+        if p["id"] == pid:
+            if body.get("name"):
+                p["name"] = str(body["name"]).strip()[:80]
+            if "instructions" in body:
+                p["instructions"] = str(body.get("instructions") or "")[:4000]
+            p["updated"] = int(time.time())
+            _save_projects(user["id"], projects)
+            return p
+    raise HTTPException(404, "Project not found")
+
+@app.delete("/projects/{pid}")
+def delete_project(pid: str, user: dict = Depends(current_user)):
+    projects = _load_projects(user["id"])
+    if not any(p["id"] == pid for p in projects):
+        raise HTTPException(404, "Project not found")
+    _save_projects(user["id"], [p for p in projects if p["id"] != pid])
+    convos = _load_convos(user["id"])              # its chats become unfiled — never deleted
+    changed = False
+    for c in convos:
+        if c.get("project_id") == pid:
+            c["project_id"] = ""; changed = True
+    if changed:
+        _save_convos(user["id"], convos)
     return {"ok": True}
 
 # ── Users ──────────────────────────────────────────────────────────────────────

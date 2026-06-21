@@ -15,6 +15,17 @@ OLLAMA_URL   = os.environ.get("OLLAMA_URL", "http://localhost:11434")
 EMBED_MODEL  = "nomic-embed-text"
 CHROMA_PATH  = "./chroma_db"
 DATA_PATH    = "./data"
+MANIFEST_PATH = Path("./storage/index_manifest.json")  # {filepath: {h: text-hash, n: chunk-count}}
+
+def _load_manifest() -> dict:
+    try:    return json.loads(MANIFEST_PATH.read_text())
+    except Exception: return {}
+
+def _save_manifest(m: dict) -> None:
+    try:
+        MANIFEST_PATH.parent.mkdir(parents=True, exist_ok=True)
+        MANIFEST_PATH.write_text(json.dumps(m))
+    except Exception: pass
 CHUNK_SIZE   = 800   # characters per chunk
 CHUNK_OVERLAP= 120
 
@@ -302,20 +313,31 @@ def gather_repos():
         add(org, name, branch)
     return repos
 
-def download_data():
-    """Clone all knowledge repos (shallow) into data/. Returns a
-    {repo_name: github-blob-base-url} map used to build source citations."""
+def download_data(update: bool = False):
+    """Clone all knowledge repos (shallow) into data/. With update=True, pull the
+    latest commits for repos already on disk (so an upstream TM Forum change is picked
+    up). Returns a {repo_name: github-blob-base-url} map used for source citations."""
     data_dir = Path(DATA_PATH)
     data_dir.mkdir(exist_ok=True)
 
     repos = gather_repos()
     url_map = {}
-    cloned = skipped = failed = 0
+    cloned = skipped = pulled = failed = 0
     for org, name, clone_url, blob_base in repos:
         url_map[name] = blob_base
         dest = data_dir / name
         if dest.exists():
-            skipped += 1
+            if update:
+                try:
+                    subprocess.run(["git", "-C", str(dest), "fetch", "--depth=1", "--quiet"],
+                                   check=True, capture_output=True, timeout=240)
+                    subprocess.run(["git", "-C", str(dest), "reset", "--hard", "FETCH_HEAD", "--quiet"],
+                                   check=True, capture_output=True, timeout=60)
+                    pulled += 1
+                except Exception:
+                    pass    # keep the existing copy if the pull fails
+            else:
+                skipped += 1
             continue
         try:
             subprocess.run(["git", "clone", "--depth=1", clone_url, str(dest)],
@@ -327,7 +349,7 @@ def download_data():
             failed += 1
             msg = e.stderr.decode()[:120] if hasattr(e, "stderr") and e.stderr else str(e)[:120]
             print(f"  ✗ {org}/{name}: {msg}")
-    print(f"  repos: {cloned} cloned, {skipped} already present, {failed} failed")
+    print(f"  repos: {cloned} cloned, {pulled} updated, {skipped} already present, {failed} failed")
     return url_map
 
 
@@ -361,6 +383,7 @@ def build_index(repo_url_map):
     docs_processed = 0
     chunks_added   = 0
     seen_hashes    = set()   # de-dup byte-identical specs across monorepo + individual repos
+    manifest: dict = {}      # filepath -> {h, n}; persisted for incremental sync
 
     def get_source_url(fpath: Path) -> str:
         """Build GitHub URL for a file."""
@@ -430,6 +453,7 @@ def build_index(repo_url_map):
         source_name = f"{parsed['title']} {parsed['version']}".strip()
         spec_id     = extract_spec_id(fpath.name)
         chunks      = chunk_text(parsed["text"])
+        manifest[str(fpath)] = {"h": text_hash, "n": len(chunks)}
 
         for ci, chunk in enumerate(chunks):
             if len(chunk) < 60:
@@ -451,6 +475,7 @@ def build_index(repo_url_map):
             print(f"  ... {i+1}/{len(all_files)} files processed, {chunks_added} chunks so far")
 
     flush_batch()
+    _save_manifest(manifest)   # baseline for incremental sync_index()
     # ChromaDB's PersistentClient flushes to disk on its own; the index is
     # fully queryable on the next server start with no warmup needed.
 
@@ -470,6 +495,123 @@ def build_index(repo_url_map):
 
     print(f"\n  ✓ Indexed {docs_processed} documents → {chunks_added} chunks in ChromaDB")
     return chunks_added
+
+
+def _kb_domain(fpath) -> str:
+    """Domain bucket for a KB file — mirrors main._kb_category so a per-folder
+    (per-domain) refresh scopes to exactly the files shown under that folder."""
+    p = Path(fpath)
+    try:    top = p.relative_to(Path(DATA_PATH)).parts[0]
+    except Exception: top = ""
+    blob = f"{extract_spec_id(p.name)} {p.name} {top}".lower()
+    if "oda" in blob:                    return "ODA"
+    if "mef" in blob:                    return "MEF"
+    if "etsi" in blob or "nfv" in blob:  return "ETSI"
+    if "3gpp" in blob:                   return "3GPP"
+    if "ietf" in blob or "rfc" in blob:  return "IETF"
+    return "TM Forum"
+
+
+def sync_index(repo_url_map, domain=None):
+    """Incremental refresh: re-embed ONLY files whose content changed since the last
+    build, and drop files that disappeared upstream. Much faster than a full rebuild
+    when TM Forum changes only a few specs. No manifest yet → fall back to a full build.
+
+    domain (e.g. "TM Forum", "ODA", "MEF") scopes the refresh to a single knowledge-base
+    folder: only that domain's files are diffed/re-embedded and only its manifest entries
+    are rewritten — every other domain is left exactly as it was."""
+    manifest = _load_manifest()
+    if not manifest:
+        print("  No manifest yet — running a full build to establish the baseline.")
+        return {"mode": "full", "chunks_added": build_index(repo_url_map)}
+
+    from vectorstore import ChromaVectorStore
+    store    = ChromaVectorStore()
+    data_dir = Path(DATA_PATH)
+
+    def src_url(fpath: Path) -> str:
+        for repo_name, base_url in repo_url_map.items():
+            if repo_name in fpath.parts:
+                idx = fpath.parts.index(repo_name)
+                return f"{base_url}/{'/'.join(fpath.parts[idx+1:])}"
+        return ""
+
+    # Desired state = every current file, parsed + hashed (parsing is cheap; embedding
+    # is the cost we're avoiding). Same dedup as build_index.
+    spec_files = []
+    for ext in ("*.json", "*.yaml", "*.yml"):
+        spec_files.extend(data_dir.rglob(ext))
+    md_files = [f for f in data_dir.rglob("*.md") if not is_junk_markdown(f.name)][:1500]
+    seen, desired = set(), {}
+    for fpath in spec_files + md_files:
+        parts = fpath.parts
+        if any(p in parts for p in (".git", "node_modules", "__pycache__")):  continue
+        if "test" in fpath.name.lower() and fpath.suffix != ".md":            continue
+        if fpath.suffix == ".md" and is_junk_markdown(fpath.name):            continue
+        if domain and _kb_domain(fpath) != domain:                            continue
+        parsed = parse_openapi_spec(fpath) if fpath.suffix in (".json", ".yaml", ".yml") else parse_markdown(fpath)
+        if not parsed or not parsed["text"].strip():                          continue
+        th = hashlib.md5(parsed["text"].encode("utf-8", "ignore")).hexdigest()
+        if th in seen:                                                        continue
+        seen.add(th)
+        desired[str(fpath)] = {"h": th, "name": fpath.name,
+                               "source": f"{parsed['title']} {parsed['version']}".strip(),
+                               "spec_id": extract_spec_id(fpath.name), "url": src_url(fpath),
+                               "chunks": chunk_text(parsed["text"])}
+
+    # When scoped to a domain, `desired` already contains only that domain's files, so
+    # restrict `removed` to the same domain — never touch other folders' chunks.
+    in_scope = (lambda p: _kb_domain(p) == domain) if domain else (lambda p: True)
+    changed = [p for p in desired if manifest.get(p, {}).get("h") != desired[p]["h"]]
+    removed = [p for p in manifest if in_scope(p) and p not in desired]
+
+    # Delete chunks of removed + changed files (ids are deterministic; Chroma ignores
+    # ids that don't exist, so over-deleting the short-skipped indexes is harmless).
+    del_ids = []
+    for p in removed + changed:
+        del_ids += [doc_id(p, ci) for ci in range(manifest.get(p, {}).get("n", 0))]
+    for i in range(0, len(del_ids), 200):
+        store.delete(del_ids[i:i+200])
+
+    # Embed + add only the changed/new files.
+    added = 0
+    pend_ids, pend_docs, pend_metas = [], [], []
+    def flush():
+        nonlocal added
+        if not pend_ids:
+            return
+        embs = embed_batch(pend_docs)
+        ids2, docs2, metas2, embs2 = [], [], [], []
+        for _id, _doc, _meta, _emb in zip(pend_ids, pend_docs, pend_metas, embs):
+            if _emb is None:
+                continue
+            ids2.append(_id); docs2.append(_doc); metas2.append(_meta); embs2.append(_emb)
+        if ids2:
+            store.upsert(ids=ids2, documents=docs2, metadatas=metas2, embeddings=embs2)
+            added += len(ids2)
+        pend_ids.clear(); pend_docs.clear(); pend_metas.clear()
+
+    for p in changed:
+        d = desired[p]
+        for ci, ch in enumerate(d["chunks"]):
+            if len(ch) < 60:
+                continue
+            pend_ids.append(doc_id(p, ci)); pend_docs.append(ch)
+            pend_metas.append({"source": d["source"], "file": d["name"], "chunk": ci,
+                               "spec_id": d["spec_id"], "source_url": d["url"]})
+            if len(pend_ids) >= 64:
+                flush()
+    flush()
+
+    fresh = {p: {"h": d["h"], "n": len(d["chunks"])} for p, d in desired.items()}
+    if domain:                                  # keep every other domain's manifest intact
+        kept = {p: v for p, v in manifest.items() if not in_scope(p)}
+        kept.update(fresh); fresh = kept
+    _save_manifest(fresh)
+    result = {"mode": "selective", "domain": domain or "all", "changed": len(changed),
+              "removed": len(removed), "unchanged": len(desired) - len(changed), "chunks_added": added}
+    print(f"  sync: {result}")
+    return result
 
 
 # ── Main ────────────────────────────────────────────────────────────────────

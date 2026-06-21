@@ -65,6 +65,11 @@ const IUser = () => (
     <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>
   </svg>
 );
+const ICheckP = () => (
+  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/>
+  </svg>
+);
 const INew = () => (
   <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
     <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
@@ -79,6 +84,7 @@ const ITheme = () => (
 const NAV_COMMANDS: Command[] = [
   { label: "Chat",                    desc: "Open the AI assistant",                  href: "/",           icon: <IChat />,    keywords: "ask question query" },
   { label: "Documents",               desc: "Browse your document library",           href: "/documents",  icon: <IDocs />,    keywords: "files pdf library" },
+  { label: "TMF Conformance Check",   desc: "Audit an OpenAPI spec against TMF630",    href: "/conformance", icon: <ICheckP />,  keywords: "conformance compliance openapi swagger audit validate tmf630 spec" },
   { label: "Document Performance",    desc: "Analytics and relevance metrics",        href: "/documents?tab=performance", icon: <IChart />,   keywords: "analytics metrics stats" },
   { label: "Admin — User Management", desc: "Invite and manage team members",         href: "/admin",      icon: <IUsers />,   adminOnly: true, keywords: "users invite team" },
   { label: "Admin — Branding",        desc: "Customize logo, colors and name",        href: "/admin?tab=branding",  icon: <IPalette />, adminOnly: true, keywords: "logo color design" },
