@@ -103,11 +103,12 @@ export default function Sidebar() {
   const { user, logout } = useAuth();
   const { branding } = useBranding();
   const { convos, activeId, open, startNew, remove, rename, togglePin,
-          projects, createProject, updateProject, deleteProject } = useConvos();
+          projects, createProject, updateProject, deleteProject, assignConvo } = useConvos();
   const { theme, cycle } = useTheme();
   const [convoQuery, setConvoQuery] = useState("");
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameVal, setRenameVal] = useState("");
+  const [moveMenuFor, setMoveMenuFor] = useState<string | null>(null);   // chat id whose "move to project" menu is open
   const [expandedProjects, setExpandedProjects] = useState<Set<string>>(new Set());
   const [editingProject, setEditingProject] = useState<Project | null>(null);
   const [projInstr, setProjInstr] = useState("");
@@ -128,31 +129,54 @@ export default function Sidebar() {
     const active = pathname === "/" && c.id === activeId;
     const editing = renamingId === c.id;
     return (
-      <div key={c.id} onClick={() => { if (!editing) { open(c.id, c.project_id || null); router.push("/"); } }}
-        className={`group flex items-center gap-1 rounded-lg pl-3 pr-1.5 py-2 text-sm cursor-pointer transition-colors ${
-          active ? "bg-slate-800 text-white" : "text-slate-400 hover:text-white hover:bg-slate-800/70"
-        }`}>
-        {c.pinned && !editing && <svg className="w-3 h-3 flex-shrink-0 text-amber-400/80" fill="currentColor" viewBox="0 0 24 24"><path d="M16 3v2l-1 1v4l3 3v2h-5v5l-1 1-1-1v-5H5v-2l3-3V6L7 5V3z" /></svg>}
-        {editing ? (
-          <input autoFocus value={renameVal} onChange={e => setRenameVal(e.target.value)}
-            onClick={e => e.stopPropagation()}
-            onKeyDown={e => { if (e.key === "Enter") commitRename(); if (e.key === "Escape") setRenamingId(null); }}
-            onBlur={commitRename}
-            className="flex-1 min-w-0 bg-slate-900 border border-red-500 rounded px-1.5 py-0.5 text-sm text-white focus:outline-none" />
-        ) : (
-          <span className="truncate flex-1">{c.title || "Untitled"}</span>
-        )}
-        {!editing && (
-          <div className="flex items-center opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0">
-            <button onClick={e => { e.stopPropagation(); togglePin(c.id, !c.pinned); }} title={c.pinned ? "Unpin" : "Pin"} className="p-1 text-slate-500 hover:text-amber-400">
-              <svg className="w-3.5 h-3.5" fill={c.pinned ? "currentColor" : "none"} viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.8"><path strokeLinecap="round" strokeLinejoin="round" d="M16 3v2l-1 1v4l3 3v2h-5v5l-1 1-1-1v-5H5v-2l3-3V6L7 5V3z" /></svg>
-            </button>
-            <button onClick={e => { e.stopPropagation(); startRename(c.id, c.title || ""); }} title="Rename" className="p-1 text-slate-500 hover:text-white">
-              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.8"><path strokeLinecap="round" strokeLinejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" /></svg>
-            </button>
-            <button onClick={e => { e.stopPropagation(); remove(c.id); }} title="Delete" className="p-1 text-slate-500 hover:text-red-400">
-              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.8"><path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
-            </button>
+      <div key={c.id}>
+        <div onClick={() => { if (!editing) { setMoveMenuFor(null); open(c.id, c.project_id || null); router.push("/"); } }}
+          className={`group flex items-center gap-1 rounded-lg pl-3 pr-1.5 py-2 text-sm cursor-pointer transition-colors ${
+            active ? "bg-slate-800 text-white" : "text-slate-400 hover:text-white hover:bg-slate-800/70"
+          }`}>
+          {c.pinned && !editing && <svg className="w-3 h-3 flex-shrink-0 text-amber-400/80" fill="currentColor" viewBox="0 0 24 24"><path d="M16 3v2l-1 1v4l3 3v2h-5v5l-1 1-1-1v-5H5v-2l3-3V6L7 5V3z" /></svg>}
+          {editing ? (
+            <input autoFocus value={renameVal} onChange={e => setRenameVal(e.target.value)}
+              onClick={e => e.stopPropagation()}
+              onKeyDown={e => { if (e.key === "Enter") commitRename(); if (e.key === "Escape") setRenamingId(null); }}
+              onBlur={commitRename}
+              className="flex-1 min-w-0 bg-slate-900 border border-red-500 rounded px-1.5 py-0.5 text-sm text-white focus:outline-none" />
+          ) : (
+            <span className="truncate flex-1">{c.title || "Untitled"}</span>
+          )}
+          {!editing && (
+            <div className="flex items-center opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0">
+              <button onClick={e => { e.stopPropagation(); setMoveMenuFor(m => m === c.id ? null : c.id); }} title="Move to project" className="p-1 text-slate-500 hover:text-violet-400">
+                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.8"><path strokeLinecap="round" strokeLinejoin="round" d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V7z" /></svg>
+              </button>
+              <button onClick={e => { e.stopPropagation(); togglePin(c.id, !c.pinned); }} title={c.pinned ? "Unpin" : "Pin"} className="p-1 text-slate-500 hover:text-amber-400">
+                <svg className="w-3.5 h-3.5" fill={c.pinned ? "currentColor" : "none"} viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.8"><path strokeLinecap="round" strokeLinejoin="round" d="M16 3v2l-1 1v4l3 3v2h-5v5l-1 1-1-1v-5H5v-2l3-3V6L7 5V3z" /></svg>
+              </button>
+              <button onClick={e => { e.stopPropagation(); startRename(c.id, c.title || ""); }} title="Rename" className="p-1 text-slate-500 hover:text-white">
+                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.8"><path strokeLinecap="round" strokeLinejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" /></svg>
+              </button>
+              <button onClick={e => { e.stopPropagation(); remove(c.id); }} title="Delete" className="p-1 text-slate-500 hover:text-red-400">
+                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.8"><path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+              </button>
+            </div>
+          )}
+        </div>
+        {moveMenuFor === c.id && (
+          <div className="ml-6 mr-1 mb-1 rounded-lg bg-slate-800 border border-slate-700 p-1 shadow-lg" onClick={e => e.stopPropagation()}>
+            <div className="text-[10px] uppercase tracking-wider text-slate-500 px-2 py-1">Move to project</div>
+            {projects.length === 0 && <div className="text-[11px] text-slate-500 px-2 py-1">No projects yet — create one above.</div>}
+            <div className="max-h-40 overflow-y-auto">
+              {projects.map(p => (
+                <button key={p.id} onClick={() => { assignConvo(c.id, p.id); setMoveMenuFor(null); setExpandedProjects(s => { const n = new Set(s); n.add(p.id); return n; }); }}
+                  className={`w-full text-left text-xs px-2 py-1.5 rounded hover:bg-slate-700 transition-colors truncate ${(c.project_id || "") === p.id ? "text-violet-300 font-medium" : "text-slate-300"}`}>
+                  {p.name}
+                </button>
+              ))}
+            </div>
+            {c.project_id && (
+              <button onClick={() => { assignConvo(c.id, ""); setMoveMenuFor(null); }}
+                className="w-full text-left text-xs px-2 py-1.5 rounded text-slate-400 hover:bg-slate-700 transition-colors border-t border-slate-700/60 mt-0.5 pt-1.5">Remove from project</button>
+            )}
           </div>
         )}
       </div>
