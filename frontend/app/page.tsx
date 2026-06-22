@@ -506,6 +506,21 @@ export default function Home() {
     runStream(q, base, true);   // Regenerate → force a fresh answer, skip the cache
   }, [loading, messages, runStream]);
 
+  // Edit a sent user message (ChatGPT-style): truncate from that point and re-ask.
+  const [editingMsg, setEditingMsg] = useState<number | null>(null);
+  const [editMsgVal, setEditMsgVal] = useState("");
+  const startEditMsg = (i: number) => { setEditingMsg(i); setEditMsgVal(messages[i]?.content || ""); };
+  const cancelEdit = () => setEditingMsg(null);
+  const submitEdit = () => {
+    if (editingMsg == null) return;
+    const i = editingMsg, text = editMsgVal.trim();
+    setEditingMsg(null);
+    if (!text || loading) return;
+    const base = messages.slice(0, i);
+    setMessages([...base, { role: "user", content: text }, { role: "assistant", content: "" }]);
+    runStream(text, base, true);
+  };
+
   const stop = () => { stoppedRef.current = true; abortRef.current?.abort(); };
 
   // Keyboard: "/" focuses the composer, Esc stops generation.
@@ -650,6 +665,18 @@ export default function Home() {
                   )
                 )}
                 <div className="max-w-2xl min-w-0">
+                  {msg.role === "user" && editingMsg === i ? (
+                    <div className="rounded-2xl rounded-tr-sm border border-red-300 dark:border-red-500/40 bg-red-50 dark:bg-red-500/5 p-2">
+                      <textarea autoFocus value={editMsgVal} onChange={e => setEditMsgVal(e.target.value)}
+                        rows={Math.min(10, Math.max(2, editMsgVal.split("\n").length))}
+                        onKeyDown={e => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); submitEdit(); } if (e.key === "Escape") cancelEdit(); }}
+                        className="w-full bg-white dark:bg-slate-900 rounded-lg p-2.5 text-sm text-gray-800 dark:text-slate-100 border border-gray-200 dark:border-slate-700 focus:outline-none focus:ring-1 focus:ring-red-500 resize-none" />
+                      <div className="flex justify-end gap-2 mt-2">
+                        <button onClick={cancelEdit} className="text-xs px-3 py-1.5 rounded-lg text-gray-500 hover:text-gray-800 dark:text-slate-400 dark:hover:text-slate-200">Cancel</button>
+                        <button onClick={submitEdit} disabled={!editMsgVal.trim()} className="text-xs font-semibold px-3 py-1.5 rounded-lg bg-red-600 hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed text-white">Save &amp; submit</button>
+                      </div>
+                    </div>
+                  ) : (
                   <div className={`rounded-2xl px-5 py-4 text-sm leading-relaxed ${
                     msg.role === "user"
                       ? "bg-red-600 text-white rounded-tr-sm"
@@ -678,6 +705,23 @@ export default function Home() {
                           ))
                       : <span>{msg.content}</span>}
                   </div>
+                  )}
+                  {msg.role === "user" && editingMsg !== i && (
+                    <div className="mt-1 flex items-center justify-end gap-1">
+                      <button onClick={() => copyMsg(i, msg.content)} title="Copy"
+                        className="text-xs text-gray-400 hover:text-gray-700 dark:text-slate-500 dark:hover:text-slate-200 px-1.5 py-1 rounded hover:bg-gray-100 dark:hover:bg-slate-800 transition-colors flex items-center gap-1">
+                        {copiedIdx === i
+                          ? <><svg className="w-3.5 h-3.5 text-green-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><polyline points="20 6 9 17 4 12" /></svg>Copied</>
+                          : <><svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><rect x="9" y="9" width="13" height="13" rx="2" /><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" /></svg>Copy</>}
+                      </button>
+                      {!loading && (
+                        <button onClick={() => startEditMsg(i)} title="Edit & resend"
+                          className="text-xs text-gray-400 hover:text-gray-700 dark:text-slate-500 dark:hover:text-slate-200 px-1.5 py-1 rounded hover:bg-gray-100 dark:hover:bg-slate-800 transition-colors flex items-center gap-1">
+                          <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" /></svg>Edit
+                        </button>
+                      )}
+                    </div>
+                  )}
 
                   {prefs.showSrc && msg.sources && msg.sources.length > 0 && (
                     <div className="mt-2.5 flex flex-wrap gap-2 items-center">

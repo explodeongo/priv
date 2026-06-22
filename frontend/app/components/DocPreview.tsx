@@ -199,6 +199,26 @@ function renderMarkdown(src: string): ReactNode {
   return out;
 }
 
+// Readable prose for EXTRACTED / plain text (PDF/DOCX/XLSX/PPTX/txt) — declutters the
+// monospace dump: normalises whitespace, collapses runaway blank lines, real paragraphs.
+function ProseView({ content }: { content: string }) {
+  const cleaned = content
+    .replace(/\r\n/g, "\n")
+    .replace(/[ \t]+\n/g, "\n")       // trailing spaces
+    .replace(/\n{3,}/g, "\n\n")       // runaway blank lines → one blank line
+    .trim();
+  const blocks = cleaned.split(/\n{2,}/);
+  return (
+    <div className="px-6 py-5 max-w-2xl mx-auto text-[14px] leading-7 text-gray-800 dark:text-slate-200">
+      {blocks.map((b, i) => {
+        const h = b.match(/^#{1,3}\s+(.*)$/);   // xlsx "# Sheet" / pptx "# Slide" markers
+        if (h) return <h3 key={i} className="text-sm font-bold text-gray-900 dark:text-slate-100 mt-5 mb-1.5 first:mt-0">{h[1]}</h3>;
+        return <p key={i} className="mb-3.5 whitespace-pre-wrap break-words">{b}</p>;
+      })}
+    </div>
+  );
+}
+
 export function DocPreview({ file, name, askScope = "all", onClose }: { file: string; name?: string; askScope?: "all" | "kb" | "docs"; onClose: () => void }) {
   const router = useRouter();
   const [data, setData] = useState<Raw | null>(null);
@@ -223,7 +243,7 @@ export function DocPreview({ file, name, askScope = "all", onClose }: { file: st
     const q = `Explain ${name || data?.name || file} — what is it for, and what are its key resources, fields, and operations?`;
     router.push(`/?ask=${encodeURIComponent(q)}&scope=${askScope}`);
   };
-  const isCode = data && (data.kind === "code" || data.kind === "text");
+  const isCode = data && data.kind === "code";   // Wrap toggle only applies to the code view
 
   // ── Find-in-document ──
   const matchCount = useMemo(() => {
@@ -354,6 +374,8 @@ export function DocPreview({ file, name, askScope = "all", onClose }: { file: st
             <pre className="px-5 pb-4 text-[12.5px] leading-relaxed font-mono whitespace-pre-wrap break-words text-gray-800 dark:text-slate-200">{renderFind(data?.content || "", query, active, activeMarkRef)}</pre>
           ) : data?.kind === "markdown" ? (
             <div className="px-6 py-5 max-w-3xl">{renderMarkdown(data.content)}</div>
+          ) : data?.kind === "text" ? (
+            <ProseView content={data?.content || ""} />
           ) : (
             <CodeView content={data?.content || ""} lang={data?.lang || ""} wrap={wrap} />
           )}
