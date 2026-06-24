@@ -8,6 +8,7 @@ Pure & offline — no LLM, no network — so it's fast, repeatable, and unit-tes
 Each finding has: id, title, severity (error|warning|info), status (pass|fail), detail,
 and up to a few concrete examples of where it applies.
 """
+import re
 from typing import Any
 
 SEV_WEIGHT = {"error": 2, "warning": 1, "info": 0}
@@ -166,3 +167,120 @@ def check_spec(spec: dict) -> dict:
         },
         "findings": findings,
     }
+
+
+# Which rules can be auto-fixed deterministically (no LLM).
+FIXABLE = {"camelcase", "pagination", "fields", "sort", "post-201", "delete-204", "error-structure", "polymorphism", "versioning"}
+
+
+def fix_spec(spec: dict, ids=None) -> list:
+    """Deterministically patch the spec to satisfy fixable TMF630 rules — mutates `spec`
+    in place, returns the rule ids actually changed. `ids=None` → apply every fixable rule.
+    Pure & offline (no LLM): same engine that does the check also does the fix."""
+    want = set(ids) if ids else None
+    def todo(fid): return fid in FIXABLE and (want is None or fid in want)
+    fixed: list = []
+    is_v2 = "swagger" in spec
+    schemas = _schemas(spec)
+
+    def mk_param(name, typ, desc):
+        p = {"name": name, "in": "query", "description": desc, "required": False}
+        if is_v2: p["type"] = typ
+        else:     p["schema"] = {"type": typ}
+        return p
+
+    def ensure_query(op, item, name, typ, desc):
+        if name in _query_params(op, item, spec):
+            return False
+        op.setdefault("parameters", []).append(mk_param(name, typ, desc))
+        return True
+
+    if todo("camelcase"):
+        ch = False
+        for _n, d in schemas.items():
+            props = d.get("properties") if isinstance(d, dict) else None
+            if not isinstance(props, dict):
+                continue
+            for prop in list(props.keys()):
+                if "_" in prop and not prop.startswith("@") and not prop.startswith("_"):
+                    camel = re.sub(r"_([a-zA-Z0-9])", lambda m: m.group(1).upper(), prop)
+                    if camel != prop and camel not in props:
+                        props[camel] = props.pop(prop); ch = True
+                        req = d.get("required")
+                        if isinstance(req, list):
+                            d["required"] = [camel if r == prop else r for r in req]
+        if ch: fixed.append("camelcase")
+
+    if todo("pagination"):
+        ch = False
+        for p, it, m, op in _iter_ops(spec):
+            if m == "get" and _is_collection(p):
+                a = ensure_query(op, it, "offset", "integer", "Requested index for the start of resources to be provided.")
+                b = ensure_query(op, it, "limit", "integer", "Requested number of resources to be provided in response.")
+                ch = ch or a or b
+        if ch: fixed.append("pagination")
+
+    if todo("fields"):
+        ch = False
+        for p, it, m, op in _iter_ops(spec):
+            if m == "get" and ensure_query(op, it, "fields", "string", "Comma-separated properties to be provided in response."):
+                ch = True
+        if ch: fixed.append("fields")
+
+    if todo("sort"):
+        ch = False
+        for p, it, m, op in _iter_ops(spec):
+            if m == "get" and _is_collection(p) and ensure_query(op, it, "sort", "string", "Comma-separated properties for sorting."):
+                ch = True
+        if ch: fixed.append("sort")
+
+    if todo("post-201"):
+        ch = False
+        for p, it, m, op in _iter_ops(spec):
+            if m == "post" and _is_collection(p):
+                resp = op.setdefault("responses", {})
+                if "201" not in resp:
+                    resp["201"] = {"description": "Created"}; ch = True
+        if ch: fixed.append("post-201")
+
+    if todo("delete-204"):
+        ch = False
+        for p, it, m, op in _iter_ops(spec):
+            if m == "delete":
+                resp = op.setdefault("responses", {})
+                if "204" not in resp:
+                    resp["204"] = {"description": "No Content"}; ch = True
+        if ch: fixed.append("delete-204")
+
+    if todo("error-structure"):
+        has_err = any("error" in n.lower() and isinstance(d, dict)
+                      and {"code", "reason"} <= set((d.get("properties", {}) or {}).keys())
+                      for n, d in schemas.items())
+        if not has_err:
+            err = {"type": "object", "required": ["code", "reason"], "properties": {
+                "code":    {"type": "string", "description": "Application-relevant detail, defined in the API or a common list."},
+                "reason":  {"type": "string", "description": "Explanation of the reason for the error which can be shown to a client user."},
+                "message": {"type": "string", "description": "More details and corrective actions related to the error."},
+                "status":  {"type": "string", "description": "HTTP Error code extension."},
+                "referenceError": {"type": "string", "description": "URI of documentation describing the error."}}}
+            if is_v2:
+                spec.setdefault("definitions", {})["Error"] = err
+            else:
+                spec.setdefault("components", {}).setdefault("schemas", {})["Error"] = err
+            fixed.append("error-structure")
+
+    if todo("polymorphism"):
+        ch = False
+        for _n, d in schemas.items():
+            props = d.get("properties") if isinstance(d, dict) else None
+            if isinstance(props, dict) and "@type" not in props:
+                props["@type"] = {"type": "string", "description": "When sub-classing, this defines the sub-class entity name."}
+                ch = True
+        if ch: fixed.append("polymorphism")
+
+    if todo("versioning"):
+        info = spec.setdefault("info", {})
+        if not info.get("version"):
+            info["version"] = "1.0.0"; fixed.append("versioning")
+
+    return fixed

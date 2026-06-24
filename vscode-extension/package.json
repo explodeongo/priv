@@ -2,45 +2,142 @@
   "name": "synaptdi",
   "displayName": "SynaptDI — Domain Assistant",
   "description": "Ask TM Forum / domain questions and get cited answers without leaving VS Code.",
-  "version": "0.2.0",
+  "version": "0.4.0",
   "publisher": "dibuai",
-  "repository": { "type": "git", "url": "https://github.com/dibuAI/SynaptDI.git" },
-  "engines": { "vscode": "^1.75.0" },
-  "categories": ["Other", "Machine Learning"],
-  "activationEvents": ["onView:synaptdi.chat"],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/dibuAI/SynaptDI.git"
+  },
+  "engines": {
+    "vscode": "^1.75.0"
+  },
+  "categories": [
+    "Other",
+    "Machine Learning"
+  ],
+  "activationEvents": [
+    "onView:synaptdi.chat",
+    "onLanguage:yaml",
+    "onLanguage:json"
+  ],
   "main": "./out/extension.js",
   "contributes": {
     "viewsContainers": {
       "activitybar": [
-        { "id": "synaptdi", "title": "SynaptDI", "icon": "media/icon.svg" }
+        {
+          "id": "synaptdi",
+          "title": "SynaptDI",
+          "icon": "media/icon.svg"
+        }
       ]
     },
     "views": {
       "synaptdi": [
-        { "id": "synaptdi.chat", "name": "Ask SynaptDI", "type": "webview" }
+        {
+          "id": "synaptdi.chat",
+          "name": "Ask SynaptDI",
+          "type": "webview"
+        }
       ]
     },
     "commands": [
-      { "command": "synaptdi.ask", "title": "Ask a question", "category": "SynaptDI", "icon": "$(comment-discussion)" },
-      { "command": "synaptdi.explain", "title": "Explain Selected Code", "category": "SynaptDI", "icon": "$(book)" },
-      { "command": "synaptdi.validate", "title": "Validate Against TM Forum Spec", "category": "SynaptDI", "icon": "$(checklist)" },
-      { "command": "synaptdi.generateClient", "title": "Generate API Client", "category": "SynaptDI", "icon": "$(code)" },
-      { "command": "synaptdi.newChat", "title": "New Chat", "category": "SynaptDI", "icon": "$(add)" }
+      {
+        "command": "synaptdi.ask",
+        "title": "Ask a question",
+        "category": "SynaptDI",
+        "icon": "$(comment-discussion)"
+      },
+      {
+        "command": "synaptdi.explain",
+        "title": "Explain Selected Code",
+        "category": "SynaptDI",
+        "icon": "$(book)"
+      },
+      {
+        "command": "synaptdi.validate",
+        "title": "Validate Against TM Forum Spec (AI review)",
+        "category": "SynaptDI",
+        "icon": "$(checklist)"
+      },
+      {
+        "command": "synaptdi.checkCompliance",
+        "title": "Check TM Forum Compliance",
+        "category": "SynaptDI",
+        "icon": "$(shield)"
+      },
+      {
+        "command": "synaptdi.fixAll",
+        "title": "Auto-fix TM Forum Issues",
+        "category": "SynaptDI",
+        "icon": "$(wand)"
+      },
+      {
+        "command": "synaptdi.generateClient",
+        "title": "Generate API Client",
+        "category": "SynaptDI",
+        "icon": "$(code)"
+      },
+      {
+        "command": "synaptdi.newChat",
+        "title": "New Chat",
+        "category": "SynaptDI",
+        "icon": "$(add)"
+      }
     ],
     "submenus": [
-      { "id": "synaptdi.editor", "label": "SynaptDI" }
+      {
+        "id": "synaptdi.editor",
+        "label": "SynaptDI"
+      }
     ],
     "menus": {
       "editor/context": [
-        { "submenu": "synaptdi.editor", "group": "navigation@9", "when": "editorTextFocus" }
+        {
+          "submenu": "synaptdi.editor",
+          "group": "navigation@9",
+          "when": "editorTextFocus"
+        }
       ],
       "synaptdi.editor": [
-        { "command": "synaptdi.explain", "group": "1_synaptdi@1" },
-        { "command": "synaptdi.validate", "group": "1_synaptdi@2" },
-        { "command": "synaptdi.generateClient", "group": "1_synaptdi@3" }
+        {
+          "command": "synaptdi.explain",
+          "group": "1_synaptdi@1"
+        },
+        {
+          "command": "synaptdi.checkCompliance",
+          "group": "1_synaptdi@2"
+        },
+        {
+          "command": "synaptdi.fixAll",
+          "group": "1_synaptdi@3"
+        },
+        {
+          "command": "synaptdi.validate",
+          "group": "1_synaptdi@4"
+        },
+        {
+          "command": "synaptdi.generateClient",
+          "group": "1_synaptdi@4"
+        }
+      ],
+      "editor/title": [
+        {
+          "command": "synaptdi.checkCompliance",
+          "when": "resourceExtname =~ /\\.(ya?ml|json)$/",
+          "group": "navigation@1"
+        },
+        {
+          "command": "synaptdi.fixAll",
+          "when": "resourceExtname =~ /\\.(ya?ml|json)$/",
+          "group": "navigation@2"
+        }
       ],
       "view/title": [
-        { "command": "synaptdi.newChat", "when": "view == synaptdi.chat", "group": "navigation@1" }
+        {
+          "command": "synaptdi.newChat",
+          "when": "view == synaptdi.chat",
+          "group": "navigation@1"
+        }
       ]
     },
     "configuration": {
@@ -53,7 +150,11 @@
         },
         "synaptdi.scope": {
           "type": "string",
-          "enum": ["all", "kb", "docs"],
+          "enum": [
+            "all",
+            "kb",
+            "docs"
+          ],
           "default": "all",
           "description": "Search scope: everything, knowledge base only, or your documents only."
         }
@@ -66,6 +167,7 @@
     "vscode:prepublish": "npm run compile"
   },
   "devDependencies": {
+    "@types/node": "^18.19.130",
     "@types/vscode": "^1.75.0",
     "typescript": "^5.4.0"
   }

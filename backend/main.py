@@ -1355,6 +1355,61 @@ async def conformance_check(file: UploadFile = File(...)):
     report["filename"] = file.filename
     return report
 
+class ConformanceTextReq(BaseModel):
+    content: str
+    filename: str = ""
+
+@app.post("/conformance/text")
+def conformance_check_text(req: ConformanceTextReq):
+    """Same TMF630 check as /conformance but from a JSON body — used by the VS Code
+    extension to validate the active editor's spec without a multipart upload."""
+    text = req.content or ""
+    spec = None
+    try:
+        spec = json.loads(text)
+    except Exception:
+        try:
+            import yaml
+            spec = yaml.safe_load(text)
+        except Exception:
+            spec = None
+    if not isinstance(spec, dict):
+        raise HTTPException(400, "Could not parse as an OpenAPI/Swagger spec (JSON or YAML).")
+    if not spec.get("paths") and not (spec.get("components") or spec.get("definitions")):
+        raise HTTPException(400, "Not an OpenAPI spec — no paths or schemas found.")
+    report = conformance.check_spec(spec)
+    report["filename"] = req.filename
+    return report
+
+class ConformanceFixReq(BaseModel):
+    content: str
+    ids: Optional[list] = None     # specific rule ids to fix; None → fix all fixable
+
+@app.post("/conformance/fix")
+def conformance_fix(req: ConformanceFixReq):
+    """Deterministically auto-fix TMF630 violations in a spec (no LLM) and return the
+    corrected spec in its original format, plus the re-checked score."""
+    content, fmt, spec = req.content or "", "json", None
+    try:
+        spec = json.loads(content)
+    except Exception:
+        try:
+            import yaml
+            spec = yaml.safe_load(content); fmt = "yaml"
+        except Exception:
+            spec = None
+    if not isinstance(spec, dict):
+        raise HTTPException(400, "Could not parse as an OpenAPI/Swagger spec (JSON or YAML).")
+    fixed = conformance.fix_spec(spec, req.ids)
+    report = conformance.check_spec(spec)
+    if fmt == "yaml":
+        import yaml
+        out = yaml.safe_dump(spec, sort_keys=False, default_flow_style=False, allow_unicode=True, width=100)
+    else:
+        out = json.dumps(spec, indent=2, ensure_ascii=False)
+    return {"content": out, "fixed": fixed, "format": fmt,
+            "score": report["score"], "summary": report["summary"]}
+
 # ── Documents ──────────────────────────────────────────────────────────────────
 @app.get("/documents/library")
 def documents_library():

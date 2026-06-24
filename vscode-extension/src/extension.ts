@@ -1,4 +1,28 @@
 import * as vscode from "vscode";
+import * as http from "http";
+import * as https from "https";
+
+// Tiny POST-JSON over node http(s) — works on every VS Code version (no fetch dependency).
+function postJson(url: string, body: unknown): Promise<{ ok: boolean; status: number; json: any; text: string }> {
+  return new Promise((resolve, reject) => {
+    let u: URL;
+    try { u = new URL(url); } catch (e) { reject(e); return; }
+    const lib = u.protocol === "https:" ? https : http;
+    const data = Buffer.from(JSON.stringify(body));
+    const req = lib.request(u, { method: "POST", headers: { "Content-Type": "application/json", "Content-Length": data.length } }, (res) => {
+      let buf = "";
+      res.on("data", (c) => (buf += c));
+      res.on("end", () => {
+        let json: any = null; try { json = JSON.parse(buf); } catch { /* non-JSON */ }
+        const code = res.statusCode || 0;
+        resolve({ ok: code >= 200 && code < 300, status: code, json, text: buf });
+      });
+    });
+    req.on("error", reject);
+    req.setTimeout(15000, () => req.destroy(new Error("timeout")));
+    req.write(data); req.end();
+  });
+}
 
 // ── Activation ──────────────────────────────────────────────────────────────
 export function activate(context: vscode.ExtensionContext) {
@@ -50,9 +74,175 @@ export function activate(context: vscode.ExtensionContext) {
     )),
     vscode.commands.registerCommand("synaptdi.newChat", async () => { await reveal(); provider.newChat(); })
   );
+
+  // ── Live compliance diagnostics (deterministic TMF630 — no model, instant) ──
+  const diagnostics = vscode.languages.createDiagnosticCollection("synaptdi");
+  const status = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
+  status.command = "synaptdi.checkCompliance";
+  context.subscriptions.push(diagnostics, status);
+
+  const runCompliance = async (doc: vscode.TextDocument, silent = false) => {
+    if (!isSpecDoc(doc)) {
+      if (!silent) vscode.window.showWarningMessage("SynaptDI: open an OpenAPI / Swagger spec (JSON or YAML) to check for TM Forum compliance.");
+      return;
+    }
+    try {
+      const filename = doc.fileName.split(/[\\/]/).pop() || "";
+      const res = await postJson(cfg().apiUrl + "/conformance/text", { content: doc.getText(), filename });
+      if (!res.ok) {
+        diagnostics.delete(doc.uri); status.hide();
+        if (!silent) vscode.window.showWarningMessage("SynaptDI: " + (res.status === 400 ? "that file isn't a recognisable OpenAPI spec." : `compliance check failed (${res.status}).`));
+        return;
+      }
+      const report = res.json;
+      diagnostics.set(doc.uri, buildDiagnostics(doc, report));
+      updateStatus(status, report);
+      if (!silent) {
+        const s = report.summary || {};
+        vscode.window.showInformationMessage(`SynaptDI · ${report.api || "spec"}: ${report.score}/100 — ${s.failed || 0} error(s), ${s.warnings || 0} warning(s). See Problems panel.`);
+      }
+    } catch {
+      status.hide();
+      if (!silent) vscode.window.showWarningMessage("SynaptDI: couldn't reach the backend at " + cfg().apiUrl + " — is it running on :8000?");
+    }
+  };
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand("synaptdi.checkCompliance", async () => {
+      const ed = vscode.window.activeTextEditor;
+      if (!ed) { vscode.window.showWarningMessage("SynaptDI: open a spec file first."); return; }
+      await runCompliance(ed.document, false);
+    }),
+    // auto-check spec files on save + when one becomes the active editor
+    vscode.workspace.onDidSaveTextDocument((doc) => { if (isSpecDoc(doc)) runCompliance(doc, true); }),
+    vscode.window.onDidChangeActiveTextEditor((ed) => {
+      if (ed && isSpecDoc(ed.document)) runCompliance(ed.document, true);
+      else status.hide();
+    })
+  );
+  // ── Layer 2: deterministic auto-fix (no model — same engine fixes what it flags) ──
+  const applyFix = async (uri: vscode.Uri, ids?: string[]) => {
+    let doc: vscode.TextDocument;
+    try { doc = await vscode.workspace.openTextDocument(uri); } catch { return; }
+    try {
+      const res = await postJson(cfg().apiUrl + "/conformance/fix", { content: doc.getText(), ids: ids && ids.length ? ids : undefined });
+      if (!res.ok) { vscode.window.showWarningMessage("SynaptDI: auto-fix failed (" + res.status + ")."); return; }
+      const out = res.json;
+      if (!out || !out.content || !(out.fixed || []).length) { vscode.window.showInformationMessage("SynaptDI: nothing here can be auto-fixed."); return; }
+      const edit = new vscode.WorkspaceEdit();
+      const full = new vscode.Range(doc.positionAt(0), doc.positionAt(doc.getText().length));
+      edit.replace(uri, full, out.content);
+      await vscode.workspace.applyEdit(edit);
+      await doc.save();                       // save → re-check fires automatically
+      vscode.window.showInformationMessage(`SynaptDI auto-fixed: ${(out.fixed || []).join(", ")} — score now ${out.score}/100.`);
+    } catch {
+      vscode.window.showWarningMessage("SynaptDI: couldn't reach the backend at " + cfg().apiUrl + ".");
+    }
+  };
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand("synaptdi.fix", (uri: vscode.Uri, ids?: string[]) => applyFix(uri, ids)),
+    vscode.commands.registerCommand("synaptdi.fixAll", async () => {
+      const ed = vscode.window.activeTextEditor;
+      if (!ed || !isSpecDoc(ed.document)) { vscode.window.showWarningMessage("SynaptDI: open an OpenAPI spec to fix."); return; }
+      await applyFix(ed.document.uri, undefined);
+    }),
+    vscode.languages.registerCodeActionsProvider(
+      [{ language: "yaml" }, { language: "yml" as any }, { language: "json" }, { language: "jsonc" }, { pattern: "**/*.{yaml,yml,json}" }],
+      new ComplianceFixProvider(),
+      { providedCodeActionKinds: [vscode.CodeActionKind.QuickFix] }
+    )
+  );
+
+  // check whatever's already open
+  const open = vscode.window.activeTextEditor;
+  if (open && isSpecDoc(open.document)) runCompliance(open.document, true);
 }
 
 export function deactivate() {}
+
+// Quick-fix actions on each SynaptDI compliance squiggle → deterministic auto-fix.
+class ComplianceFixProvider implements vscode.CodeActionProvider {
+  provideCodeActions(doc: vscode.TextDocument, _range: vscode.Range | vscode.Selection, context: vscode.CodeActionContext): vscode.CodeAction[] | undefined {
+    const ours = context.diagnostics.filter((d) => String(d.source || "").startsWith("SynaptDI") && d.code);
+    if (!ours.length) return;
+    const actions: vscode.CodeAction[] = [];
+    const seen = new Set<string>();
+    for (const d of ours) {
+      const id = String(d.code);
+      if (seen.has(id)) continue;
+      seen.add(id);
+      const a = new vscode.CodeAction("Fix this with SynaptDI (TMF630)", vscode.CodeActionKind.QuickFix);
+      a.diagnostics = [d];
+      a.command = { command: "synaptdi.fix", title: "Fix", arguments: [doc.uri, [id]] };
+      actions.push(a);
+    }
+    const ids = Array.from(seen);
+    if (ids.length > 1) {
+      const all = new vscode.CodeAction("Fix all TM Forum issues (SynaptDI)", vscode.CodeActionKind.QuickFix);
+      all.command = { command: "synaptdi.fix", title: "Fix all", arguments: [doc.uri, ids] };
+      actions.push(all);
+    }
+    return actions;
+  }
+}
+
+// ── Compliance helpers (pure-ish, deterministic) ──────────────────────────────
+function isSpecDoc(doc: vscode.TextDocument): boolean {
+  const byExt = /\.(ya?ml|json)$/i.test(doc.fileName);
+  const byLang = ["yaml", "yml", "json", "jsonc"].includes(doc.languageId);
+  if (!byExt && !byLang) return false;
+  const head = doc.getText().slice(0, 4000).toLowerCase();
+  return head.includes("openapi") || head.includes("swagger") || (head.includes("paths") && head.includes("info"));
+}
+
+function locate(doc: vscode.TextDocument, token: string): vscode.Range | undefined {
+  if (!token) return undefined;
+  const idx = doc.getText().indexOf(token);
+  if (idx < 0) return undefined;
+  return new vscode.Range(doc.positionAt(idx), doc.positionAt(idx + token.length));
+}
+
+function buildDiagnostics(doc: vscode.TextDocument, report: any): vscode.Diagnostic[] {
+  const sevOf: Record<string, vscode.DiagnosticSeverity> = {
+    error: vscode.DiagnosticSeverity.Error,
+    warning: vscode.DiagnosticSeverity.Warning,
+    info: vscode.DiagnosticSeverity.Information,
+  };
+  const out: vscode.Diagnostic[] = [];
+  for (const f of report?.findings || []) {
+    if (f.status !== "fail") continue;
+    const sev = sevOf[f.severity] ?? vscode.DiagnosticSeverity.Warning;
+    const base = `${f.title} — ${f.detail}`;
+    const examples: string[] = f.examples || [];
+    if (examples.length === 0) {
+      const d = new vscode.Diagnostic(new vscode.Range(0, 0, 0, 1), base, sev);
+      d.source = "SynaptDI · TMF630"; d.code = f.id;
+      out.push(d);
+      continue;
+    }
+    for (const ex of examples) {
+      const token = ex.includes(".") ? ex.split(".").pop() || ex : ex;   // "Schema.prop" → "prop"
+      const range = locate(doc, token) ?? new vscode.Range(0, 0, 0, 1);
+      const msg = ex !== token ? `${base} (${ex})` : base;
+      const d = new vscode.Diagnostic(range, msg, sev);
+      d.source = "SynaptDI · TMF630"; d.code = f.id;
+      out.push(d);
+    }
+  }
+  return out;
+}
+
+function updateStatus(status: vscode.StatusBarItem, report: any) {
+  const score = report?.score ?? 0;
+  const s = report?.summary || {};
+  status.text = `$(${s.failed ? "error" : score >= 90 ? "pass" : "warning"}) TMF ${score}/100`;
+  status.tooltip = `TM Forum (TMF630) compliance: ${score}/100 · ${s.failed || 0} error(s) · ${s.warnings || 0} warning(s)\nClick to re-check`;
+  status.color = score >= 90 ? undefined
+    : score >= 70 ? new vscode.ThemeColor("editorWarning.foreground")
+    : new vscode.ThemeColor("editorError.foreground");
+  status.show();
+}
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 function cfg() {
