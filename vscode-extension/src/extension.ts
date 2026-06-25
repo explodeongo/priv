@@ -154,6 +154,44 @@ export function activate(context: vscode.ExtensionContext) {
     )
   );
 
+  // ── Layer 3: scan the whole workspace for compliance ──
+  const scanChannel = vscode.window.createOutputChannel("SynaptDI Compliance");
+  context.subscriptions.push(scanChannel,
+    vscode.commands.registerCommand("synaptdi.scanWorkspace", async () => {
+      const uris = await vscode.workspace.findFiles("**/*.{yaml,yml,json}", "**/{node_modules,out,.next,dist,.git}/**", 800);
+      if (!uris.length) { vscode.window.showInformationMessage("SynaptDI: no YAML/JSON files in the workspace."); return; }
+      const rows: { file: string; score: number; failed: number; warnings: number }[] = [];
+      let reachedBackend = true;
+      await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: "SynaptDI: scanning specs for TM Forum compliance…" }, async (progress) => {
+        for (const uri of uris) {
+          let doc: vscode.TextDocument;
+          try { doc = await vscode.workspace.openTextDocument(uri); } catch { continue; }
+          if (!isSpecDoc(doc)) continue;
+          progress.report({ message: vscode.workspace.asRelativePath(uri) });
+          try {
+            const res = await postJson(cfg().apiUrl + "/conformance/text", { content: doc.getText(), filename: uri.path.split("/").pop() || "" });
+            if (!res.ok) continue;
+            const rep = res.json;
+            diagnostics.set(uri, buildDiagnostics(doc, rep));
+            rows.push({ file: vscode.workspace.asRelativePath(uri), score: rep.score, failed: rep.summary.failed, warnings: rep.summary.warnings });
+          } catch { reachedBackend = false; break; }
+        }
+      });
+      if (!reachedBackend) { vscode.window.showWarningMessage("SynaptDI: couldn't reach the backend at " + cfg().apiUrl + "."); return; }
+      if (!rows.length) { vscode.window.showInformationMessage("SynaptDI: no OpenAPI/Swagger specs found to check."); return; }
+      rows.sort((a, b) => a.score - b.score);
+      scanChannel.clear();
+      scanChannel.appendLine("TM Forum (TMF630) compliance — workspace scan");
+      scanChannel.appendLine("".padEnd(60, "-"));
+      for (const r of rows) scanChannel.appendLine(`  ${String(r.score).padStart(3)}/100   ${r.failed}E ${r.warnings}W   ${r.file}`);
+      const below = rows.filter((r) => r.score < 90).length;
+      scanChannel.appendLine("".padEnd(60, "-"));
+      scanChannel.appendLine(`  ${rows.length - below}/${rows.length} specs >= 90 - lowest ${rows[0].score}/100`);
+      scanChannel.show(true);
+      vscode.window.showInformationMessage(`SynaptDI: scanned ${rows.length} spec(s), ${below} below 90/100 - see Problems + the SynaptDI Compliance output.`);
+    })
+  );
+
   // check whatever's already open
   const open = vscode.window.activeTextEditor;
   if (open && isSpecDoc(open.document)) runCompliance(open.document, true);
@@ -395,16 +433,31 @@ export function renderWebviewHtml(apiUrl: string, scope: string): string {
           border-radius:6px; padding:0 14px; cursor:pointer; font-size:13px; }
   .send:hover { background: var(--vscode-button-hoverBackground); }
   .send.stop { background: var(--vscode-inputValidation-errorBackground, #5a1d1d); }
+  .dot { width:8px; height:8px; border-radius:50%; background: var(--vscode-descriptionForeground); flex-shrink:0; }
+  .dot.on { background:#3fb950; } .dot.off { background:#e5534b; }
+  #mode { font-weight:600; }
+  .acts { display:flex; align-items:center; gap:8px; margin-top:7px; flex-wrap:wrap; }
+  .conf { font-size:10px; font-weight:600; }
+  .conf.cf-hi { color:#3fb950; } .conf.cf-md { color:#d29922; } .conf.cf-lo { color: var(--vscode-descriptionForeground); }
+  .instant { font-size:10px; color:#d29922; font-weight:600; }
+  .tdot { display:inline-block; width:6px; height:6px; border-radius:50%; margin-right:5px; vertical-align:middle; }
+  .tier-kb { background:#3fb950; } .tier-repo { background:#a371f7; } .tier-web { background:#58a6ff; } .tier-file { background:#d29922; }
+  .sugs { display:flex; flex-direction:column; gap:6px; margin:12px auto 6px; max-width:340px; }
+  .sug { text-align:left; background: var(--vscode-textBlockQuote-background); color: var(--vscode-foreground);
+         border:1px solid var(--vscode-panel-border); border-radius:6px; padding:7px 9px; font-size:12px; cursor:pointer; }
+  .sug:hover { border-color: var(--vscode-focusBorder); }
+  .etitle { font-weight:600; color: var(--vscode-foreground); margin-bottom:4px; font-size:13px; }
 </style>
 </head>
 <body>
   <header>
-    <span class="lang" style="font-size:10px;text-transform:uppercase;letter-spacing:.05em;opacity:.8;">Scope</span>
+    <span id="dot" class="dot" title="Backend status"></span>
     <select id="scope" title="Search scope">
       <option value="all">Everything</option>
       <option value="kb">Knowledge base</option>
       <option value="docs">My documents</option>
     </select>
+    <button class="ghost" id="mode" title="Answer mode">Fast</button>
     <span class="spacer"></span>
     <button class="ghost" id="newchat" title="Clear conversation">New chat</button>
   </header>
@@ -426,16 +479,29 @@ export function renderWebviewHtml(apiUrl: string, scope: string): string {
   const saved = vscodeApi.getState() || {};
   let messages = Array.isArray(saved.messages) ? saved.messages : [];
   let scope = saved.scope || DEFAULT_SCOPE;
+  let mode = saved.mode || 'fast';     // default Fast — lighter on RAM
 
   const thread = document.getElementById('thread');
   const q = document.getElementById('q');
   const send = document.getElementById('send');
   const scopeSel = document.getElementById('scope');
+  const modeBtn = document.getElementById('mode');
+  const dot = document.getElementById('dot');
   scopeSel.value = scope;
 
   let controller = null;     // AbortController for the active stream
   let curBody = null;        // DOM node of the streaming assistant body
-  const persist = () => vscodeApi.setState({ messages, scope });
+  const persist = () => vscodeApi.setState({ messages, scope, mode });
+
+  function paintMode(){
+    modeBtn.textContent = mode === 'deep' ? 'Deep' : 'Fast';
+    modeBtn.title = mode === 'deep'
+      ? 'Deep — full 8B model (best quality, slower). Click for Fast.'
+      : 'Fast — small model (quick, light on RAM). Click for Deep.';
+  }
+  paintMode();
+  function setDot(ok){ dot.className = 'dot ' + (ok ? 'on' : 'off'); dot.title = ok ? 'Backend connected' : 'Backend unreachable (is it on :8000, and is Ollama running for chat?)'; }
+  fetch(API + '/health').then(function(r){ setDot(r.ok); }).catch(function(){ setDot(false); });
 
   // ── Markdown → HTML (mirrors the web app renderer) ──
   function esc(s){ return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
@@ -481,30 +547,53 @@ export function renderWebviewHtml(apiUrl: string, scope: string): string {
     return html;
   }
 
+  function tierOf(s){
+    var ot = s.origin_type;
+    if (ot === 'repo') return { label: 'GitHub repository', cls: 'tier-repo' };
+    if (ot === 'web')  return { label: 'Web page', cls: 'tier-web' };
+    if (ot === 'file') return { label: 'Internal upload', cls: 'tier-file' };
+    return { label: 'Official' + (s.domain ? ' · ' + s.domain : ''), cls: 'tier-kb' };
+  }
   function srcChips(sources){
     if (!sources || !sources.length) return '';
-    return '<div class="srcs">' + sources.map(s => {
-      const tag = s.upload ? ' <span class="tag">· yours</span>' : '';
-      const inner = esc(s.name || s.file || 'source') + tag;
-      return s.url ? '<a class="src" href="' + esc(s.url) + '" target="_blank">' + inner + '</a>'
-                   : '<span class="src">' + inner + '</span>';
+    return '<div class="srcs">' + sources.map(function(s){
+      var t = tierOf(s);
+      var inner = '<span class="tdot ' + t.cls + '"></span>' + esc(s.name || s.file || 'source');
+      var ttl = ' title="' + esc(t.label) + '"';
+      return s.url ? '<a class="src" href="' + esc(s.url) + '" target="_blank"' + ttl + '>' + inner + '</a>'
+                   : '<span class="src"' + ttl + '>' + inner + '</span>';
     }).join('') + '</div>';
   }
+  function confBadge(c){
+    if (!c || !c.level) return '';
+    var m = { high: ['High confidence','cf-hi'], medium: ['Medium confidence','cf-md'], low: ['Limited grounding','cf-lo'] };
+    var x = m[c.level] || m.low;
+    return '<span class="conf ' + x[1] + '">' + x[0] + '</span>';
+  }
 
+  var SUGS = ['What mandatory fields does TMF622 Product Order require?', 'What is the difference between TMF620 and TMF633?', 'How do I paginate results in TM Forum Open APIs?'];
   function render(){
     if (!messages.length) {
-      thread.innerHTML = '<div class="empty">Ask anything about your TM Forum knowledge base.<br>'
-        + '<span class="k">Tip: select code in any file, right-click → <b>SynaptDI</b> → Explain / Validate / Generate.</span></div>';
+      thread.innerHTML = '<div class="empty"><div class="etitle">Ask your TM Forum knowledge base</div>'
+        + '<div class="sugs">' + SUGS.map(function(s){ return '<button class="sug" data-q="' + esc(s) + '">' + esc(s) + '</button>'; }).join('') + '</div>'
+        + '<span class="k">Tip: select code → right-click → <b>SynaptDI</b> → Explain / Check Compliance.</span></div>';
       curBody = null; return;
     }
-    thread.innerHTML = messages.map(m => {
-      const cls = 'msg ' + (m.role === 'user' ? 'user' : 'bot') + (m.error ? ' err' : '');
-      const role = m.role === 'user' ? 'You' : 'SynaptDI';
-      const bodyHtml = m.content ? md(m.content) : '<span class="dots"></span>';
-      const meta = (m.role === 'assistant' && m.latency_ms) ? '<div class="meta">' + (m.latency_ms/1000).toFixed(1) + 's</div>' : '';
+    thread.innerHTML = messages.map(function(m, idx){
+      var cls = 'msg ' + (m.role === 'user' ? 'user' : 'bot') + (m.error ? ' err' : '');
+      var role = m.role === 'user' ? 'You' : 'SynaptDI';
+      var bodyHtml = m.content ? md(m.content) : '<span class="dots"></span>';
+      var footer = '';
+      if (m.role === 'assistant' && m.content && !m.error) {
+        var lat = m.cached ? '<span class="instant">instant</span>' : (m.latency_ms ? '<span class="meta">' + (m.latency_ms/1000).toFixed(1) + 's</span>' : '');
+        var isLast = idx === messages.length - 1;
+        footer = '<div class="acts">' + confBadge(m.confidence) + lat
+               + '<button class="mini" data-act="copyMsg">Copy</button>'
+               + (isLast ? '<button class="mini" data-act="regen">Regenerate</button>' : '') + '</div>';
+      }
       return '<div class="' + cls + '"><div class="role">' + role + '</div>'
            + '<div class="body">' + bodyHtml + '</div>'
-           + (m.role === 'assistant' ? srcChips(m.sources) : '') + meta + '</div>';
+           + (m.role === 'assistant' ? srcChips(m.sources) : '') + footer + '</div>';
     }).join('');
     curBody = thread.querySelector('.msg:last-child .body');
     scrollDown();
@@ -512,7 +601,7 @@ export function renderWebviewHtml(apiUrl: string, scope: string): string {
   function scrollDown(){ thread.scrollTop = thread.scrollHeight; }
   function setSending(on){ send.textContent = on ? 'Stop' : 'Ask'; send.classList.toggle('stop', on); }
 
-  async function run(question){
+  async function run(question, fresh){
     if (controller) { controller.abort(); }   // stop any in-flight stream first
     const history = messages.filter(m => m.content && !m.error).slice(-6).map(m => ({ role: m.role, content: m.content }));
     messages.push({ role: 'user', content: question });
@@ -530,10 +619,11 @@ export function renderWebviewHtml(apiUrl: string, scope: string): string {
       const res = await fetch(API + '/query/stream', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ question, top_k: 8, scope, history }),
+        body: JSON.stringify({ question, top_k: mode === 'fast' ? 4 : 8, scope, history, mode, no_cache: !!fresh }),
         signal: ctrl.signal,
       });
       if (!res.ok || !res.body) throw new Error('API error ' + res.status);
+      setDot(true);
       const reader = res.body.getReader();
       const dec = new TextDecoder();
       let buf = '';
@@ -547,13 +637,13 @@ export function renderWebviewHtml(apiUrl: string, scope: string): string {
           if (!line.trim()) continue;
           let evt; try { evt = JSON.parse(line); } catch { continue; }
           if (evt.type === 'token') { acc += evt.text; last.content = acc; if (curBody) curBody.innerHTML = md(acc); scrollDown(); }
-          else if (evt.type === 'done') { last.sources = evt.sources; last.latency_ms = evt.latency_ms; }
+          else if (evt.type === 'done') { last.sources = evt.sources; last.latency_ms = evt.latency_ms; last.confidence = evt.confidence; last.cached = evt.cached; }
           else if (evt.type === 'error') { acc = evt.text; last.content = acc; last.error = true; }
         }
       }
     } catch (e) {
       if (e && e.name === 'AbortError') { last.content = acc ? acc + '\\n\\n_(stopped)_' : '_(stopped)_'; }
-      else { last.content = 'Could not reach SynaptDI at ' + API + ' — is the backend running on port 8000? (' + (e && e.message || e) + ')'; last.error = true; }
+      else { last.content = 'Could not reach SynaptDI at ' + API + ' — is the backend running on port 8000? (' + (e && e.message || e) + ')'; last.error = true; setDot(false); }
     } finally {
       clearTimeout(timer);
       controller = null;
@@ -570,6 +660,14 @@ export function renderWebviewHtml(apiUrl: string, scope: string): string {
     q.value = ''; autosize();
     run(text);
   }
+  function regenerate(){
+    if (controller) return;
+    var lastUser = null;
+    for (var i = messages.length - 1; i >= 0; i--) { if (messages[i].role === 'user') { lastUser = messages[i].content; break; } }
+    if (!lastUser) return;
+    if (messages.length >= 2 && messages[messages.length - 1].role === 'assistant') messages.splice(messages.length - 2, 2);
+    run(lastUser, true);   // skip cache → genuinely fresh answer
+  }
 
   // ── Events ──
   send.addEventListener('click', submit);
@@ -577,20 +675,32 @@ export function renderWebviewHtml(apiUrl: string, scope: string): string {
   function autosize(){ q.style.height = 'auto'; q.style.height = Math.min(q.scrollHeight, 140) + 'px'; }
   q.addEventListener('input', autosize);
   scopeSel.addEventListener('change', () => { scope = scopeSel.value; persist(); });
+  modeBtn.addEventListener('click', function(){ mode = (mode === 'deep' ? 'fast' : 'deep'); paintMode(); persist(); });
   document.getElementById('newchat').addEventListener('click', () => {
     if (controller) controller.abort();
     messages = []; render(); persist();
   });
 
-  // Code-block Copy / Insert (event delegation survives re-renders).
-  thread.addEventListener('click', e => {
-    const btn = e.target.closest('[data-act]');
+  // Delegation: suggestions, code Copy/Insert, answer Copy, Regenerate.
+  thread.addEventListener('click', function(e){
+    var sug = e.target.closest('.sug');
+    if (sug) { run(sug.getAttribute('data-q')); return; }
+    var btn = e.target.closest('[data-act]');
     if (!btn) return;
-    const codeEl = btn.closest('.code')?.querySelector('pre code');
-    if (!codeEl) return;
-    const code = codeEl.textContent || '';
-    if (btn.dataset.act === 'copy') { vscodeApi.postMessage({ type: 'copy', text: code }); btn.textContent = 'Copied'; setTimeout(() => btn.textContent = 'Copy', 1200); }
-    else if (btn.dataset.act === 'insert') { vscodeApi.postMessage({ type: 'insert', code }); }
+    var act = btn.dataset.act;
+    if (act === 'copy' || act === 'insert') {
+      var codeWrap = btn.closest('.code');
+      var codeEl = codeWrap ? codeWrap.querySelector('pre code') : null;
+      if (!codeEl) return;
+      var code = codeEl.textContent || '';
+      if (act === 'copy') { vscodeApi.postMessage({ type: 'copy', text: code }); btn.textContent = 'Copied'; setTimeout(function(){ btn.textContent = 'Copy'; }, 1200); }
+      else { vscodeApi.postMessage({ type: 'insert', code: code }); }
+    } else if (act === 'copyMsg') {
+      var msgEl = btn.closest('.msg');
+      var body = msgEl ? msgEl.querySelector('.body') : null;
+      vscodeApi.postMessage({ type: 'copy', text: body ? body.innerText : '' });
+      btn.textContent = 'Copied'; setTimeout(function(){ btn.textContent = 'Copy'; }, 1200);
+    } else if (act === 'regen') { regenerate(); }
   });
 
   // Messages from the extension host.

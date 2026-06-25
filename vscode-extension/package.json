@@ -2,7 +2,7 @@
   "name": "synaptdi",
   "displayName": "SynaptDI — Domain Assistant",
   "description": "Ask TM Forum / domain questions and get cited answers without leaving VS Code.",
-  "version": "0.4.0",
+  "version": "0.6.0",
   "publisher": "dibuai",
   "repository": {
     "type": "git",
@@ -70,6 +70,12 @@
         "title": "Auto-fix TM Forum Issues",
         "category": "SynaptDI",
         "icon": "$(wand)"
+      },
+      {
+        "command": "synaptdi.scanWorkspace",
+        "title": "Scan Workspace for TM Forum Compliance",
+        "category": "SynaptDI",
+        "icon": "$(search)"
       },
       {
         "command": "synaptdi.generateClient",
