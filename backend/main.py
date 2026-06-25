@@ -1791,6 +1791,32 @@ def list_conversations(user: dict = Depends(current_user)):
          for c in convos],
         key=lambda x: (not x["pinned"], -x["updated"]))}   # pinned first, then most recent
 
+@app.get("/conversations/search")
+def search_conversations(q: str = "", user: dict = Depends(current_user)):
+    """Full-text search across a user's chat titles AND message contents, with a snippet
+    of the first match. Defined before /{cid} so 'search' isn't read as an id."""
+    ql = (q or "").strip().lower()
+    if len(ql) < 2:
+        return {"results": []}
+    out = []
+    for c in _load_convos(user["id"]):
+        title = c.get("title", "") or "Untitled"
+        snippet, matched = "", ql in title.lower()
+        for m in c.get("messages", []):
+            content = m.get("content") or ""
+            idx = content.lower().find(ql)
+            if idx >= 0:
+                matched = True
+                start = max(0, idx - 40)
+                snippet = (("…" if start > 0 else "") + content[start:idx + len(ql) + 70]).replace("\n", " ").strip()
+                break
+        if matched:
+            out.append({"id": c["id"], "title": title, "updated": c.get("updated", 0),
+                        "pinned": bool(c.get("pinned")), "project_id": c.get("project_id", ""),
+                        "snippet": snippet})
+    out.sort(key=lambda x: -x["updated"])
+    return {"results": out[:50]}
+
 @app.get("/conversations/{cid}")
 def get_conversation(cid: str, user: dict = Depends(current_user)):
     for c in _load_convos(user["id"]):

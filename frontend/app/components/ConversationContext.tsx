@@ -13,6 +13,7 @@ function authH(json = false): Record<string, string> {
 
 export interface Convo { id: string; title: string; count: number; updated: number; pinned?: boolean; project_id?: string; }
 export interface Project { id: string; name: string; instructions: string; count: number; updated: number; }
+export interface ConvoMatch { id: string; title: string; updated: number; pinned?: boolean; project_id?: string; snippet: string; }
 // A one-shot signal the chat page reacts to (load a convo's messages, or clear for a new chat).
 export type LoadSignal = { kind: "open"; id: string; nonce: number } | { kind: "new"; nonce: number } | null;
 
@@ -34,6 +35,7 @@ interface Ctx {
   updateProject: (id: string, patch: { name?: string; instructions?: string }) => Promise<void>;
   deleteProject: (id: string) => Promise<void>;
   assignConvo: (cid: string, projectId: string) => Promise<void>;
+  searchConvos: (q: string) => Promise<ConvoMatch[]>;
   loadSignal: LoadSignal;
   consume: () => void;
 }
@@ -120,10 +122,18 @@ export function ConversationProvider({ children }: { children: ReactNode }) {
     refresh(); refreshProjects();
   }, [refresh, refreshProjects]);
 
+  const searchConvos = useCallback(async (q: string): Promise<ConvoMatch[]> => {
+    try {
+      const r = await fetch(`${API}/conversations/search?q=${encodeURIComponent(q)}`, { headers: authH() });
+      if (!r.ok) return [];
+      return (await r.json()).results || [];
+    } catch { return []; }
+  }, []);
+
   return (
     <C.Provider value={{
       convos, activeId, setActiveId, refresh, open, startNew, remove, rename, togglePin,
-      projects, activeProjectId, refreshProjects, createProject, updateProject, deleteProject, assignConvo,
+      projects, activeProjectId, refreshProjects, createProject, updateProject, deleteProject, assignConvo, searchConvos,
       loadSignal, consume,
     }}>
       {children}

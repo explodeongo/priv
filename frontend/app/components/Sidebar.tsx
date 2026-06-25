@@ -1,10 +1,10 @@
 "use client";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useState, useEffect } from "react";
+import { useState, useEffect, Fragment } from "react";
 import { useAuth } from "./AuthProvider";
 import { useBranding } from "./BrandingContext";
-import { useConvos, type Convo, type Project } from "./ConversationContext";
+import { useConvos, type Convo, type Project, type ConvoMatch } from "./ConversationContext";
 import { useTheme } from "./ThemeContext";
 
 // ── Icons ────────────────────────────────────────────────────────────────────
@@ -94,6 +94,24 @@ function AvatarBubble({ avatar, initials, size = 32 }: { avatar?: string; initia
   );
 }
 
+// Bucket chats into Today / Yesterday / Previous 7 Days / 30 Days / Older.
+function groupByDate(list: Convo[]): { label: string; items: Convo[] }[] {
+  const now = new Date();
+  const startToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime() / 1000;
+  const b = [
+    { label: "Today", cut: startToday, items: [] as Convo[] },
+    { label: "Yesterday", cut: startToday - 86400, items: [] as Convo[] },
+    { label: "Previous 7 Days", cut: startToday - 7 * 86400, items: [] as Convo[] },
+    { label: "Previous 30 Days", cut: startToday - 30 * 86400, items: [] as Convo[] },
+    { label: "Older", cut: -Infinity, items: [] as Convo[] },
+  ];
+  for (const c of list) {
+    const u = c.updated || 0;
+    for (const g of b) { if (u >= g.cut) { g.items.push(c); break; } }
+  }
+  return b.filter(g => g.items.length);
+}
+
 // ── Component ────────────────────────────────────────────────────────────────
 export default function Sidebar() {
   const [collapsed, setCollapsed] = useState(false);
@@ -103,12 +121,22 @@ export default function Sidebar() {
   const { user, logout } = useAuth();
   const { branding } = useBranding();
   const { convos, activeId, open, startNew, remove, rename, togglePin,
-          projects, createProject, updateProject, deleteProject, assignConvo } = useConvos();
+          projects, createProject, updateProject, deleteProject, assignConvo, searchConvos } = useConvos();
   const { theme, cycle } = useTheme();
   const [convoQuery, setConvoQuery] = useState("");
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameVal, setRenameVal] = useState("");
   const [moveMenuFor, setMoveMenuFor] = useState<string | null>(null);   // chat id whose "move to project" menu is open
+  const [searchResults, setSearchResults] = useState<ConvoMatch[] | null>(null);   // full-text results (null = not searching)
+
+  // Debounced full-text search across chat titles + message content.
+  useEffect(() => {
+    const ql = convoQuery.trim();
+    if (ql.length < 2) { setSearchResults(null); return; }
+    let alive = true;
+    const t = setTimeout(() => { searchConvos(ql).then(r => { if (alive) setSearchResults(r); }); }, 200);
+    return () => { alive = false; clearTimeout(t); };
+  }, [convoQuery, searchConvos]);
   const [expandedProjects, setExpandedProjects] = useState<Set<string>>(new Set());
   const [editingProject, setEditingProject] = useState<Project | null>(null);
   const [projInstr, setProjInstr] = useState("");
@@ -305,18 +333,40 @@ export default function Sidebar() {
             )}
 
             {(() => {
-              const ql = convoQuery.trim().toLowerCase();
+              const searching = convoQuery.trim().length >= 2;
+              if (searching) {
+                return (
+                  <div className="flex-1 overflow-y-auto pr-0.5 mt-1">
+                    {searchResults === null && <p className="text-xs text-slate-600 px-3 py-1.5">Searching…</p>}
+                    {searchResults !== null && searchResults.length === 0 && <p className="text-xs text-slate-600 px-3 py-1.5">No chats match “{convoQuery.trim()}”.</p>}
+                    {(searchResults || []).map(r => (
+                      <div key={r.id} onClick={() => { setMoveMenuFor(null); open(r.id, r.project_id || null); router.push("/"); }}
+                        className="rounded-lg px-3 py-2 cursor-pointer text-slate-300 hover:bg-slate-800/70 transition-colors">
+                        <div className="text-sm truncate flex items-center gap-1.5">
+                          {r.pinned && <svg className="w-3 h-3 flex-shrink-0 text-amber-400/80" fill="currentColor" viewBox="0 0 24 24"><path d="M16 3v2l-1 1v4l3 3v2h-5v5l-1 1-1-1v-5H5v-2l3-3V6L7 5V3z" /></svg>}
+                          <span className="truncate">{r.title || "Untitled"}</span>
+                        </div>
+                        {r.snippet && <div className="text-[11px] text-slate-500 truncate mt-0.5">{r.snippet}</div>}
+                      </div>
+                    ))}
+                  </div>
+                );
+              }
               const unfiled = convos.filter(c => !c.project_id);
-              const filtered = unfiled.filter(c => !ql || (c.title || "").toLowerCase().includes(ql));
-              const pinned = filtered.filter(c => c.pinned);
-              const recent = filtered.filter(c => !c.pinned);
+              const pinned = unfiled.filter(c => c.pinned);
+              const recent = unfiled.filter(c => !c.pinned);
+              const groups = groupByDate(recent);
               return (
                 <div className="flex-1 overflow-y-auto space-y-0.5 pr-0.5 mt-1">
                   {pinned.length > 0 && <div className="text-[10px] font-bold uppercase tracking-widest text-slate-600 px-3 pt-2 pb-1">Pinned</div>}
                   {pinned.map(Row)}
-                  {recent.length > 0 && <div className="text-[10px] font-bold uppercase tracking-widest text-slate-600 px-3 pt-2 pb-1">Recent</div>}
-                  {recent.map(Row)}
-                  {filtered.length === 0 && <p className="text-xs text-slate-600 px-3 py-1.5">{unfiled.length === 0 ? "No chats yet." : "No matches."}</p>}
+                  {groups.map(g => (
+                    <Fragment key={g.label}>
+                      <div className="text-[10px] font-bold uppercase tracking-widest text-slate-600 px-3 pt-2 pb-1">{g.label}</div>
+                      {g.items.map(Row)}
+                    </Fragment>
+                  ))}
+                  {unfiled.length === 0 && <p className="text-xs text-slate-600 px-3 py-1.5">No chats yet.</p>}
                 </div>
               );
             })()}
