@@ -1,0 +1,94 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# SynaptDI demo spec — DELIBERATELY non-compliant with TM Forum (TMF630).
+# Open this file with the SynaptDI extension running and the backend on :8000.
+#   • You'll see red squiggles + a "TMF NN/100" score in the status bar / chat.
+#   • Click "Auto-fix N" (chat context bar) or the wand in the editor title.
+#   • Watch the score jump to ~90+ — all deterministic, no AI.
+# See DEMO.md for the full 30-second walkthrough.
+# ─────────────────────────────────────────────────────────────────────────────
+openapi: 3.0.3
+info:
+  title: Product Ordering API
+  description: Example TM Forum-style API used to demo SynaptDI compliance checking.
+  version: "1.0.0"
+
+paths:
+  /productOrder:
+    get:
+      summary: List product orders
+      operationId: listProductOrder
+      # ✗ no offset/limit pagination, no fields, no sort
+      responses:
+        "200":
+          description: A list of product orders.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ProductOrder"
+    post:
+      summary: Create a product order
+      operationId: createProductOrder
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProductOrder"
+      # ✗ create should return 201, not 200
+      responses:
+        "200":
+          description: Created.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProductOrder"
+
+  /productOrder/{id}:
+    get:
+      summary: Retrieve a product order
+      operationId: retrieveProductOrder
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      # ✗ no fields parameter
+      responses:
+        "200":
+          description: A product order.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProductOrder"
+    delete:
+      summary: Delete a product order
+      operationId: deleteProductOrder
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      # ✗ delete should return 204, not 200
+      responses:
+        "200":
+          description: Deleted.
+
+components:
+  schemas:
+    ProductOrder:
+      type: object
+      # ✗ no @type discriminator (TMF polymorphism); fields are not camelCase
+      properties:
+        id:
+          type: string
+        Order_Date:
+          type: string
+          format: date-time
+        order_status:
+          type: string
+        ProductName:
+          type: string
+    # ✗ no TMF Error schema for 4xx/5xx responses

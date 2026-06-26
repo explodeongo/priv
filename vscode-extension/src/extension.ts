@@ -75,6 +75,60 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand("synaptdi.newChat", async () => { await reveal(); provider.newChat(); })
   );
 
+  // ── Apply-as-diff + multi-file context (chat → editor) ──
+  const proposed = new Map<string, string>();
+  const DIFF_SCHEME = "synaptdi-proposed";
+  context.subscriptions.push(
+    vscode.workspace.registerTextDocumentContentProvider(DIFF_SCHEME, {
+      provideTextDocumentContent: (uri) => proposed.get(uri.toString()) || "",
+    })
+  );
+  const applyCode = async (code: string) => {
+    if (!code.trim()) return;
+    const ed = vscode.window.activeTextEditor
+      || vscode.window.visibleTextEditors.find((e) => e.document.uri.scheme === "file")
+      || vscode.window.visibleTextEditors[0];
+    if (!ed) { vscode.window.showWarningMessage("SynaptDI: open the file you want to apply this code to first."); return; }
+    const doc = ed.document;
+    const sel = ed.selection;
+    const whole = !sel || sel.isEmpty;
+    const range = whole ? new vscode.Range(doc.positionAt(0), doc.positionAt(doc.getText().length)) : new vscode.Range(sel.start, sel.end);
+    const text = doc.getText();
+    const next = text.slice(0, doc.offsetAt(range.start)) + code + text.slice(doc.offsetAt(range.end));
+    const name = doc.fileName.split(/[\\/]/).pop() || "file";
+    const uri = vscode.Uri.from({ scheme: DIFF_SCHEME, path: "/" + name, query: String(Date.now()) });
+    proposed.set(uri.toString(), next);
+    await vscode.commands.executeCommand("vscode.diff", doc.uri, uri, "SynaptDI: " + name + " — review proposed changes");
+    const pick = await vscode.window.showInformationMessage(
+      "Apply SynaptDI's proposed changes to " + name + (whole ? "" : " (selection)") + "?", "Apply", "Cancel");
+    proposed.delete(uri.toString());
+    if (pick !== "Apply") return;
+    const edit = new vscode.WorkspaceEdit();
+    edit.replace(doc.uri, range, code);
+    await vscode.workspace.applyEdit(edit);
+    vscode.window.showInformationMessage("SynaptDI: applied changes to " + name + ".");
+  };
+  context.subscriptions.push(
+    vscode.commands.registerCommand("synaptdi._applyCode", (code: string) => applyCode(code)),
+    vscode.commands.registerCommand("synaptdi._pickFiles", async () => {
+      const picks = await vscode.window.showOpenDialog({
+        canSelectMany: true, canSelectFolders: false, openLabel: "Add to chat context",
+        filters: { "Specs & code": ["yaml", "yml", "json", "ts", "js", "py", "java", "go"], "All files": ["*"] },
+      });
+      if (!picks || !picks.length) return;
+      const files: any[] = [];
+      for (const uri of picks.slice(0, 4)) {
+        try {
+          const doc = await vscode.workspace.openTextDocument(uri);
+          let code = doc.getText();
+          if (code.length > 6000) code = code.slice(0, 6000) + "\n/* …truncated… */";
+          files.push({ file: uri.fsPath.split(/[\\/]/).pop() || "file", lang: doc.languageId || "", code });
+        } catch {}
+      }
+      if (files.length) provider.postExtraFiles(files);
+    })
+  );
+
   // ── Live compliance diagnostics (deterministic TMF630 — no model, instant) ──
   const diagnostics = vscode.languages.createDiagnosticCollection("synaptdi");
   const status = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
@@ -375,6 +429,8 @@ class SynaptDIViewProvider implements vscode.WebviewViewProvider {
         if (allow.indexOf(msg.command) >= 0) vscode.commands.executeCommand(msg.command);
         return;
       }
+      if (msg.type === "applyCode") { vscode.commands.executeCommand("synaptdi._applyCode", String(msg.code || "")); return; }
+      if (msg.type === "pickFiles") { vscode.commands.executeCommand("synaptdi._pickFiles"); return; }
     });
   }
 
@@ -413,6 +469,8 @@ class SynaptDIViewProvider implements vscode.WebviewViewProvider {
       fixable: (report && report.fixable) || 0,
     });
   }
+
+  postExtraFiles(files: any[]) { this.view?.webview.postMessage({ type: "extraFiles", files }); }
 
   ask(question: string) {
     this.pending = question;
@@ -551,6 +609,9 @@ export function renderWebviewHtml(apiUrl: string, scope: string): string {
             background: var(--vscode-button-secondaryBackground, var(--vscode-button-background));
             color: var(--vscode-button-secondaryForeground, var(--vscode-button-foreground)); }
   .fixbtn:hover { background: var(--vscode-button-hoverBackground); }
+  .addfile { font-size:11px; cursor:pointer; background:transparent; border:1px dashed var(--vscode-panel-border);
+             border-radius:6px; padding:3px 8px; color: var(--vscode-descriptionForeground); }
+  .addfile:hover { border-color: var(--vscode-focusBorder); color: var(--vscode-foreground); }
 </style>
 </head>
 <body>
@@ -594,6 +655,7 @@ export function renderWebviewHtml(apiUrl: string, scope: string): string {
   let attach = (saved.attach !== false);   // auto-read the open file as context (default on)
   let pendingContent = null;           // resolver awaiting the host's file content
   let comp = null;                     // {file,score,failed,warnings,api,fixable} live TMF score for the open spec
+  let extraFiles = [];                 // [{file,lang,code}] extra files added via "+ Add file" (not persisted)
   const FENCE = String.fromCharCode(96, 96, 96);   // triple backtick, without touching the template literal
 
   const thread = document.getElementById('thread');
@@ -653,7 +715,7 @@ export function renderWebviewHtml(apiUrl: string, scope: string): string {
         const raw = code.join('\\n');
         html += '<div class="code"><div class="cbar"><span class="lang">' + esc(lang || 'code') + '</span>'
              +  '<span class="cbtns"><button class="mini" data-act="copy">Copy</button>'
-             +  '<button class="mini" data-act="insert">Insert</button></span></div>'
+             +  '<button class="mini" data-act="apply">Apply</button></span></div>'
              +  '<pre><code>' + esc(raw) + '</code></pre></div>';
         continue;
       }
@@ -738,14 +800,21 @@ export function renderWebviewHtml(apiUrl: string, scope: string): string {
     render(); persist();
 
     var sendQ = question;
+    var ctxParts = [];
     if (attach && editorCtx && editorCtx.file) {
       var c = await requestContent();
-      if (c && c.code && c.code.trim()) {
-        var fenced = FENCE + (c.lang || '') + '\\n' + c.code + '\\n' + FENCE;
-        sendQ = 'I am working in the file "' + c.file + '"' + (c.lang ? ' (' + c.lang + ')' : '')
-              + '. Here are its current contents:\\n\\n' + fenced
-              + '\\n\\nUsing the TM Forum / ODA knowledge base, answer my question about this code, and flag any TM Forum compliance issues you notice.\\n\\nMy question: ' + question;
-      }
+      if (c && c.code && c.code.trim()) ctxParts.push({ file: c.file, lang: c.lang, code: c.code });
+    }
+    for (var ei = 0; ei < extraFiles.length; ei++) {
+      var f = extraFiles[ei], dup = false;
+      for (var pi = 0; pi < ctxParts.length; pi++) { if (ctxParts[pi].file === f.file) { dup = true; break; } }
+      if (!dup) ctxParts.push(f);
+    }
+    if (ctxParts.length) {
+      var blocks = ctxParts.map(function(p){ return '### ' + p.file + (p.lang ? ' (' + p.lang + ')' : '') + '\\n' + FENCE + (p.lang || '') + '\\n' + p.code + '\\n' + FENCE; }).join('\\n\\n');
+      var intro = ctxParts.length === 1 ? 'I am working in the file "' + ctxParts[0].file + '".' : 'I am working across these ' + ctxParts.length + ' files:';
+      sendQ = intro + '\\n\\n' + blocks
+            + '\\n\\nUsing the TM Forum / ODA knowledge base, answer my question about this code, and flag any TM Forum compliance issues you notice.\\n\\nMy question: ' + question;
     }
 
     controller = new AbortController();
@@ -822,29 +891,35 @@ export function renderWebviewHtml(apiUrl: string, scope: string): string {
   function renderCtx(){
     var bar = document.getElementById('ctxbar');
     if (!bar) return;
-    if (!editorCtx || !editorCtx.file) { bar.innerHTML = ''; return; }
     var html = '';
-    var sub = editorCtx.hasSelection ? 'selection' : (editorCtx.lines ? editorCtx.lines + ' lines' : 'file');
-    if (attach) {
-      html += '<span class="ctxchip on" title="SynaptDI reads this file when you ask">'
-        + ctxIcon() + 'Reading <b>' + esc(editorCtx.file) + '</b>'
-        + '<span style="opacity:.65">' + esc(sub) + '</span>'
-        + '<button class="x" id="ctxoff" title="Ask without the open file">\\u00d7</button></span>';
-    } else {
-      html += '<span class="ctxchip off" id="ctxon" title="Include the open file as context">'
-        + ctxIcon() + 'Use <b>' + esc(editorCtx.file) + '</b></span>';
+    if (editorCtx && editorCtx.file) {
+      var sub = editorCtx.hasSelection ? 'selection' : (editorCtx.lines ? editorCtx.lines + ' lines' : 'file');
+      if (attach) {
+        html += '<span class="ctxchip on" title="SynaptDI reads this file when you ask">'
+          + ctxIcon() + 'Reading <b>' + esc(editorCtx.file) + '</b>'
+          + '<span style="opacity:.65">' + esc(sub) + '</span>'
+          + '<button class="x" id="ctxoff" title="Ask without the open file">\\u00d7</button></span>';
+      } else {
+        html += '<span class="ctxchip off" id="ctxon" title="Include the open file as context">'
+          + ctxIcon() + 'Use <b>' + esc(editorCtx.file) + '</b></span>';
+      }
+      if (editorCtx.isSpec && comp && comp.file === editorCtx.file) {
+        var col = scoreColor(comp.score);
+        var bits = [];
+        if (comp.failed) bits.push(comp.failed + ' error' + (comp.failed === 1 ? '' : 's'));
+        if (comp.warnings) bits.push(comp.warnings + ' warning' + (comp.warnings === 1 ? '' : 's'));
+        var issues = bits.join(' · ') || 'all checks pass';
+        html += '<span class="compill" id="compcheck" title="' + esc((comp.api || 'spec') + ' — TMF630 compliance, click for details') + '" style="border-color:' + col + '">'
+          + shieldIcon(col) + '<b style="color:' + col + '">' + comp.score + '/100</b>'
+          + '<span style="opacity:.7">' + esc(issues) + '</span></span>';
+        if (comp.fixable) html += '<button class="fixbtn" id="fixactive" title="Auto-fix the mechanical issues — deterministic, no AI">' + wandIcon() + 'Auto-fix ' + comp.fixable + '</button>';
+      }
     }
-    if (editorCtx.isSpec && comp && comp.file === editorCtx.file) {
-      var col = scoreColor(comp.score);
-      var bits = [];
-      if (comp.failed) bits.push(comp.failed + ' error' + (comp.failed === 1 ? '' : 's'));
-      if (comp.warnings) bits.push(comp.warnings + ' warning' + (comp.warnings === 1 ? '' : 's'));
-      var issues = bits.join(' · ') || 'all checks pass';
-      html += '<span class="compill" id="compcheck" title="' + esc((comp.api || 'spec') + ' — TMF630 compliance, click for details') + '" style="border-color:' + col + '">'
-        + shieldIcon(col) + '<b style="color:' + col + '">' + comp.score + '/100</b>'
-        + '<span style="opacity:.7">' + esc(issues) + '</span></span>';
-      if (comp.fixable) html += '<button class="fixbtn" id="fixactive" title="Auto-fix the mechanical issues — deterministic, no AI">' + wandIcon() + 'Auto-fix ' + comp.fixable + '</button>';
+    for (var i = 0; i < extraFiles.length; i++) {
+      html += '<span class="ctxchip" title="Added to the chat context">' + ctxIcon() + '<b>' + esc(extraFiles[i].file) + '</b>'
+        + '<button class="x" data-rmfile="' + i + '" title="Remove from context">\\u00d7</button></span>';
     }
+    html += '<button class="addfile" id="addfile" title="Add another file to the chat context">+ Add file</button>';
     bar.innerHTML = html;
   }
   function requestContent(){
@@ -922,13 +997,15 @@ export function renderWebviewHtml(apiUrl: string, scope: string): string {
   document.getElementById('newchat').addEventListener('click', function(){
     if (controller) controller.abort();
     persist();                 // save the current thread into history first
-    messages = []; activeId = null; view = 'chat'; render(); persist();
+    messages = []; activeId = null; extraFiles = []; view = 'chat'; render(); renderCtx(); persist();
   });
   document.getElementById('ctxbar').addEventListener('click', function(e){
     if (e.target.closest('#ctxoff')) { attach = false; renderCtx(); persist(); }
     else if (e.target.closest('#ctxon')) { attach = true; renderCtx(); persist(); }
     else if (e.target.closest('#fixactive')) { vscodeApi.postMessage({ type: 'command', command: 'synaptdi.fixAll' }); }
     else if (e.target.closest('#compcheck')) { vscodeApi.postMessage({ type: 'command', command: 'synaptdi.checkCompliance' }); }
+    else if (e.target.closest('#addfile')) { vscodeApi.postMessage({ type: 'pickFiles' }); }
+    else { var rm = e.target.closest('[data-rmfile]'); if (rm) { extraFiles.splice(parseInt(rm.getAttribute('data-rmfile'), 10), 1); renderCtx(); } }
   });
 
   // Delegation: suggestions, code Copy/Insert, answer Copy, Regenerate.
@@ -942,13 +1019,13 @@ export function renderWebviewHtml(apiUrl: string, scope: string): string {
     var btn = e.target.closest('[data-act]');
     if (!btn) return;
     var act = btn.dataset.act;
-    if (act === 'copy' || act === 'insert') {
+    if (act === 'copy' || act === 'apply') {
       var codeWrap = btn.closest('.code');
       var codeEl = codeWrap ? codeWrap.querySelector('pre code') : null;
       if (!codeEl) return;
       var code = codeEl.textContent || '';
       if (act === 'copy') { vscodeApi.postMessage({ type: 'copy', text: code }); btn.textContent = 'Copied'; setTimeout(function(){ btn.textContent = 'Copy'; }, 1200); }
-      else { vscodeApi.postMessage({ type: 'insert', code: code }); }
+      else { vscodeApi.postMessage({ type: 'applyCode', code: code }); btn.textContent = 'Opening diff…'; setTimeout(function(){ btn.textContent = 'Apply'; }, 1600); }
     } else if (act === 'copyMsg') {
       var msgEl = btn.closest('.msg');
       var body = msgEl ? msgEl.querySelector('.body') : null;
@@ -962,9 +1039,19 @@ export function renderWebviewHtml(apiUrl: string, scope: string): string {
     var m = ev.data;
     if (!m) return;
     if (m.type === 'ask') { view = 'chat'; run(m.question); }
-    else if (m.type === 'clear') { if (controller) controller.abort(); persist(); messages = []; activeId = null; view = 'chat'; render(); persist(); }
+    else if (m.type === 'clear') { if (controller) controller.abort(); persist(); messages = []; activeId = null; extraFiles = []; view = 'chat'; render(); renderCtx(); persist(); }
     else if (m.type === 'editorContext') { editorCtx = m.file ? m : null; if (!editorCtx || (comp && comp.file !== editorCtx.file)) comp = null; renderCtx(); }
     else if (m.type === 'compliance') { comp = m; renderCtx(); }
+    else if (m.type === 'extraFiles') {
+      var incoming = m.files || [];
+      for (var i = 0; i < incoming.length; i++) {
+        var nf = incoming[i], have = false;
+        for (var j = 0; j < extraFiles.length; j++) { if (extraFiles[j].file === nf.file) { extraFiles[j] = nf; have = true; break; } }
+        if (!have) extraFiles.push(nf);
+      }
+      if (extraFiles.length > 4) extraFiles = extraFiles.slice(-4);
+      renderCtx();
+    }
     else if (m.type === 'content') { if (pendingContent) { var r = pendingContent; pendingContent = null; r(m); } }
   });
 
