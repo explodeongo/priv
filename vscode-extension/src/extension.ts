@@ -116,8 +116,24 @@ export function activate(context: vscode.ExtensionContext) {
     // auto-check spec files on save + when one becomes the active editor
     vscode.workspace.onDidSaveTextDocument((doc) => { if (isSpecDoc(doc)) runCompliance(doc, true); }),
     vscode.window.onDidChangeActiveTextEditor((ed) => {
+      provider.pushContext();
       if (ed && isSpecDoc(ed.document)) runCompliance(ed.document, true);
       else status.hide();
+    })
+  );
+
+  // Keep the chat's "reading <file>" context fresh, and check specs live as you type.
+  let ctxTimer: ReturnType<typeof setTimeout> | undefined;
+  let liveTimer: ReturnType<typeof setTimeout> | undefined;
+  context.subscriptions.push(
+    vscode.window.onDidChangeTextEditorSelection(() => {
+      if (ctxTimer) clearTimeout(ctxTimer);
+      ctxTimer = setTimeout(() => provider.pushContext(), 120);
+    }),
+    vscode.workspace.onDidChangeTextDocument((e) => {
+      const ed = vscode.window.activeTextEditor;
+      if (!ed || e.document !== ed.document) return;
+      if (isSpecDoc(e.document)) { if (liveTimer) clearTimeout(liveTimer); liveTimer = setTimeout(() => runCompliance(e.document, true), 700); }
     })
   );
   // ── Layer 2: deterministic auto-fix (no model — same engine fixes what it flags) ──
@@ -318,7 +334,7 @@ class SynaptDIViewProvider implements vscode.WebviewViewProvider {
 
     view.webview.onDidReceiveMessage(async (msg) => {
       if (!msg || typeof msg.type !== "string") return;
-      if (msg.type === "ready") { this.ready = true; this.flush(); return; }
+      if (msg.type === "ready") { this.ready = true; this.flush(); this.pushContext(); return; }
       if (msg.type === "copy") {
         await vscode.env.clipboard.writeText(String(msg.text ?? ""));
         vscode.window.setStatusBarMessage("SynaptDI: copied to clipboard", 1500);
@@ -332,11 +348,44 @@ class SynaptDIViewProvider implements vscode.WebviewViewProvider {
         vscode.window.showTextDocument(ed.document, ed.viewColumn);
         return;
       }
+      if (msg.type === "getContent") {
+        // The webview asks for the live file when you send a question.
+        const ed = vscode.window.activeTextEditor
+          || vscode.window.visibleTextEditors.find((e) => e.document.uri.scheme === "file")
+          || vscode.window.visibleTextEditors[0];
+        let code = "", file = "", lang = "";
+        if (ed) {
+          const sel = ed.selection;
+          code = sel && !sel.isEmpty ? ed.document.getText(sel) : ed.document.getText();
+          if (code.length > 6000) code = code.slice(0, 6000) + "\n/* …truncated… */";
+          file = ed.document.fileName.split(/[\\/]/).pop() || "untitled";
+          lang = ed.document.languageId || "";
+        }
+        this.view?.webview.postMessage({ type: "content", code, file, lang });
+        return;
+      }
     });
   }
 
   reload() { if (this.view) { this.ready = false; this.view.webview.html = this.html(); } }
   newChat() { this.view?.webview.postMessage({ type: "clear" }); }
+
+  // Tell the webview which file is open so the chat can read it automatically.
+  pushContext() {
+    if (!this.view || !this.ready) return;
+    const ed = vscode.window.activeTextEditor
+      || vscode.window.visibleTextEditors.find((e) => e.document.uri.scheme === "file")
+      || vscode.window.visibleTextEditors[0];
+    if (!ed) { this.view.webview.postMessage({ type: "editorContext", file: null }); return; }
+    const sel = ed.selection;
+    this.view.webview.postMessage({
+      type: "editorContext",
+      file: ed.document.fileName.split(/[\\/]/).pop() || "untitled",
+      lang: ed.document.languageId || "",
+      lines: ed.document.lineCount,
+      hasSelection: !!(sel && !sel.isEmpty),
+    });
+  }
 
   ask(question: string) {
     this.pending = question;
@@ -447,6 +496,27 @@ export function renderWebviewHtml(apiUrl: string, scope: string): string {
          border:1px solid var(--vscode-panel-border); border-radius:6px; padding:7px 9px; font-size:12px; cursor:pointer; }
   .sug:hover { border-color: var(--vscode-focusBorder); }
   .etitle { font-weight:600; color: var(--vscode-foreground); margin-bottom:4px; font-size:13px; }
+  .histbar { padding:6px 8px; border-bottom:1px solid var(--vscode-panel-border); }
+  .histq { width:100%; background: var(--vscode-input-background); color: var(--vscode-input-foreground);
+           border:1px solid var(--vscode-input-border); border-radius:6px; padding:5px 8px; font-size:12px; }
+  .hgroup { font-size:10px; text-transform:uppercase; letter-spacing:.06em; color: var(--vscode-descriptionForeground); padding:9px 10px 2px; font-weight:600; }
+  .hitem { position:relative; padding:6px 26px 6px 10px; border-radius:6px; cursor:pointer; }
+  .hitem:hover { background: var(--vscode-list-hoverBackground, rgba(255,255,255,.06)); }
+  .htitle { font-size:12.5px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .hsnip { font-size:10.5px; color: var(--vscode-descriptionForeground); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; margin-top:1px; }
+  .hdel { position:absolute; right:5px; top:6px; background:transparent; border:none; color: var(--vscode-descriptionForeground);
+          cursor:pointer; font-size:15px; line-height:1; opacity:0; padding:0 5px; }
+  .hitem:hover .hdel { opacity:1; } .hdel:hover { color: var(--vscode-errorForeground); }
+  .ctxbar { padding:0 8px 6px; }
+  .ctxchip { display:inline-flex; align-items:center; gap:5px; max-width:100%; font-size:11px;
+             background: var(--vscode-textBlockQuote-background); border:1px solid var(--vscode-panel-border);
+             border-radius:6px; padding:3px 5px 3px 8px; color: var(--vscode-descriptionForeground); }
+  .ctxchip.on { border-color: var(--vscode-focusBorder); color: var(--vscode-foreground); }
+  .ctxchip.off { cursor:pointer; } .ctxchip.off:hover { border-color: var(--vscode-focusBorder); }
+  .ctxchip b { color: var(--vscode-foreground); font-weight:600; max-width:150px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .ctxchip svg { flex:0 0 auto; opacity:.85; }
+  .ctxchip .x { background:transparent; border:none; color:inherit; cursor:pointer; font-size:13px; line-height:1; padding:0 1px 0 2px; opacity:.65; }
+  .ctxchip .x:hover { opacity:1; color: var(--vscode-errorForeground); }
 </style>
 </head>
 <body>
@@ -459,12 +529,14 @@ export function renderWebviewHtml(apiUrl: string, scope: string): string {
     </select>
     <button class="ghost" id="mode" title="Answer mode">Fast</button>
     <span class="spacer"></span>
-    <button class="ghost" id="newchat" title="Clear conversation">New chat</button>
+    <button class="ghost" id="history" title="Chat history">History</button>
+    <button class="ghost" id="newchat" title="Start a new chat">New chat</button>
   </header>
 
   <div id="thread"></div>
 
   <footer>
+    <div class="ctxbar" id="ctxbar"></div>
     <div class="composer">
       <textarea id="q" placeholder="Ask about TM Forum APIs, ODA, MEF, eTOM, SID… (Shift+Enter for newline)"></textarea>
       <button class="send" id="send">Ask</button>
@@ -477,9 +549,17 @@ export function renderWebviewHtml(apiUrl: string, scope: string): string {
   const DEFAULT_SCOPE = ${JSON.stringify(scope)};
 
   const saved = vscodeApi.getState() || {};
-  let messages = Array.isArray(saved.messages) ? saved.messages : [];
+  let conversations = Array.isArray(saved.conversations) ? saved.conversations : [];   // local saved chats
+  let messages = Array.isArray(saved.messages) ? saved.messages : [];                  // current thread
+  let activeId = saved.activeId || null;
+  let view = 'chat';                   // 'chat' | 'history'
+  let histQuery = '';
   let scope = saved.scope || DEFAULT_SCOPE;
   let mode = saved.mode || 'fast';     // default Fast — lighter on RAM
+  let editorCtx = null;                // {file,lang,lines,hasSelection} pushed by the host editor
+  let attach = (saved.attach !== false);   // auto-read the open file as context (default on)
+  let pendingContent = null;           // resolver awaiting the host's file content
+  const FENCE = String.fromCharCode(96, 96, 96);   // triple backtick, without touching the template literal
 
   const thread = document.getElementById('thread');
   const q = document.getElementById('q');
@@ -491,7 +571,20 @@ export function renderWebviewHtml(apiUrl: string, scope: string): string {
 
   let controller = null;     // AbortController for the active stream
   let curBody = null;        // DOM node of the streaming assistant body
-  const persist = () => vscodeApi.setState({ messages, scope, mode });
+  function genId(){ return 'c' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6); }
+  function syncActive(){
+    if (!messages.length) return;
+    if (!activeId) activeId = genId();
+    var fu = null;
+    for (var i = 0; i < messages.length; i++) { if (messages[i].role === 'user' && messages[i].content) { fu = messages[i].content; break; } }
+    var title = (fu || 'New chat').slice(0, 60);
+    var ex = null;
+    for (var j = 0; j < conversations.length; j++) { if (conversations[j].id === activeId) { ex = conversations[j]; break; } }
+    if (ex) { ex.messages = messages; ex.title = title; ex.updated = Date.now(); }
+    else { conversations.unshift({ id: activeId, title: title, messages: messages, updated: Date.now() }); }
+    if (conversations.length > 60) conversations = conversations.slice(0, 60);
+  }
+  const persist = function(){ syncActive(); vscodeApi.setState({ conversations: conversations, messages: messages, activeId: activeId, scope: scope, mode: mode, attach: attach }); };
 
   function paintMode(){
     modeBtn.textContent = mode === 'deep' ? 'Deep' : 'Fast';
@@ -573,6 +666,7 @@ export function renderWebviewHtml(apiUrl: string, scope: string): string {
 
   var SUGS = ['What mandatory fields does TMF622 Product Order require?', 'What is the difference between TMF620 and TMF633?', 'How do I paginate results in TM Forum Open APIs?'];
   function render(){
+    if (view === 'history') { renderHistory(); return; }
     if (!messages.length) {
       thread.innerHTML = '<div class="empty"><div class="etitle">Ask your TM Forum knowledge base</div>'
         + '<div class="sugs">' + SUGS.map(function(s){ return '<button class="sug" data-q="' + esc(s) + '">' + esc(s) + '</button>'; }).join('') + '</div>'
@@ -608,6 +702,17 @@ export function renderWebviewHtml(apiUrl: string, scope: string): string {
     messages.push({ role: 'assistant', content: '' });
     render(); persist();
 
+    var sendQ = question;
+    if (attach && editorCtx && editorCtx.file) {
+      var c = await requestContent();
+      if (c && c.code && c.code.trim()) {
+        var fenced = FENCE + (c.lang || '') + '\\n' + c.code + '\\n' + FENCE;
+        sendQ = 'I am working in the file "' + c.file + '"' + (c.lang ? ' (' + c.lang + ')' : '')
+              + '. Here are its current contents:\\n\\n' + fenced
+              + '\\n\\nUsing the TM Forum / ODA knowledge base, answer my question about this code, and flag any TM Forum compliance issues you notice.\\n\\nMy question: ' + question;
+      }
+    }
+
     controller = new AbortController();
     const ctrl = controller;
     const timer = setTimeout(() => ctrl.abort(), 180000);
@@ -619,7 +724,7 @@ export function renderWebviewHtml(apiUrl: string, scope: string): string {
       const res = await fetch(API + '/query/stream', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ question, top_k: mode === 'fast' ? 4 : 8, scope, history, mode, no_cache: !!fresh }),
+        body: JSON.stringify({ question: sendQ, top_k: mode === 'fast' ? 4 : 8, scope, history, mode, no_cache: !!fresh }),
         signal: ctrl.signal,
       });
       if (!res.ok || !res.body) throw new Error('API error ' + res.status);
@@ -669,20 +774,112 @@ export function renderWebviewHtml(apiUrl: string, scope: string): string {
     run(lastUser, true);   // skip cache → genuinely fresh answer
   }
 
+  function ctxIcon(){
+    return '<svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"><path d="M9 1.6H4a1 1 0 0 0-1 1v10.8a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1V5.6L9 1.6Z"/><path d="M9 1.6v4h4"/></svg>';
+  }
+  function renderCtx(){
+    var bar = document.getElementById('ctxbar');
+    if (!bar) return;
+    if (!editorCtx || !editorCtx.file) { bar.innerHTML = ''; return; }
+    var sub = editorCtx.hasSelection ? 'selection' : (editorCtx.lines ? editorCtx.lines + ' lines' : 'file');
+    if (attach) {
+      bar.innerHTML = '<span class="ctxchip on" title="SynaptDI reads this file when you ask">'
+        + ctxIcon() + 'Reading <b>' + esc(editorCtx.file) + '</b>'
+        + '<span style="opacity:.65">' + esc(sub) + '</span>'
+        + '<button class="x" id="ctxoff" title="Ask without the open file">\\u00d7</button></span>';
+    } else {
+      bar.innerHTML = '<span class="ctxchip off" id="ctxon" title="Include the open file as context">'
+        + ctxIcon() + 'Use <b>' + esc(editorCtx.file) + '</b></span>';
+    }
+  }
+  function requestContent(){
+    return new Promise(function(resolve){
+      pendingContent = resolve;
+      vscodeApi.postMessage({ type: 'getContent' });
+      setTimeout(function(){ if (pendingContent) { var r = pendingContent; pendingContent = null; r(null); } }, 1500);
+    });
+  }
+
+  function groupByDateJS(list){
+    var now = new Date();
+    var startToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+    var defs = [['Today', startToday], ['Yesterday', startToday - 86400000], ['Previous 7 Days', startToday - 7*86400000], ['Previous 30 Days', startToday - 30*86400000], ['Older', -Infinity]];
+    var groups = defs.map(function(d){ return { label: d[0], cut: d[1], items: [] }; });
+    list.forEach(function(c){ var u = c.updated || 0; for (var i = 0; i < groups.length; i++) { if (u >= groups[i].cut) { groups[i].items.push(c); break; } } });
+    return groups.filter(function(g){ return g.items.length; });
+  }
+  function renderHistory(){
+    var ql = histQuery.trim().toLowerCase();
+    var list = conversations.filter(function(c){
+      if (!ql) return true;
+      if ((c.title || '').toLowerCase().indexOf(ql) >= 0) return true;
+      return (c.messages || []).some(function(m){ return (m.content || '').toLowerCase().indexOf(ql) >= 0; });
+    });
+    list.sort(function(a, b){ return (b.updated || 0) - (a.updated || 0); });
+    var html = '<div class="histbar"><input id="histq" class="histq" placeholder="Search history (titles + messages)" value="' + esc(histQuery) + '"/></div>';
+    if (!conversations.length) {
+      html += '<div class="empty">No saved chats yet.<br><span class="k">Your conversations are saved here automatically as you chat.</span></div>';
+    } else if (!list.length) {
+      html += '<div class="empty">No chats match.</div>';
+    } else {
+      groupByDateJS(list).forEach(function(g){
+        html += '<div class="hgroup">' + g.label + '</div>';
+        g.items.forEach(function(c){
+          var snip = '';
+          if (ql) {
+            for (var i = 0; i < (c.messages || []).length; i++) {
+              var ct = c.messages[i].content || '';
+              var k = ct.toLowerCase().indexOf(ql);
+              if (k >= 0) { snip = ((k > 30 ? '…' : '') + ct.slice(Math.max(0, k - 30), k + 60)).replace(/\\n/g, ' '); break; }
+            }
+          }
+          html += '<div class="hitem" data-open="' + c.id + '"><div class="htitle">' + esc(c.title || 'Untitled') + '</div>'
+               +  (snip ? '<div class="hsnip">' + esc(snip) + '</div>' : '')
+               +  '<button class="hdel" data-del="' + c.id + '" title="Delete chat">\\u00d7</button></div>';
+        });
+      });
+    }
+    thread.innerHTML = html;
+    var hq = document.getElementById('histq');
+    if (hq) { hq.oninput = function(){ histQuery = hq.value; renderHistory(); }; hq.focus(); }
+  }
+  function openConvo(id){
+    var c = null;
+    for (var i = 0; i < conversations.length; i++) { if (conversations[i].id === id) { c = conversations[i]; break; } }
+    if (!c) return;
+    if (controller) controller.abort();
+    activeId = id; messages = (c.messages || []).slice(); view = 'chat'; render(); persist();
+  }
+  function deleteConvo(id){
+    conversations = conversations.filter(function(c){ return c.id !== id; });
+    if (activeId === id) { activeId = null; messages = []; }
+    render(); persist();
+  }
+
   // ── Events ──
   send.addEventListener('click', submit);
+  document.getElementById('history').addEventListener('click', function(){ view = (view === 'history' ? 'chat' : 'history'); histQuery = ''; render(); });
   q.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submit(); } });
   function autosize(){ q.style.height = 'auto'; q.style.height = Math.min(q.scrollHeight, 140) + 'px'; }
   q.addEventListener('input', autosize);
   scopeSel.addEventListener('change', () => { scope = scopeSel.value; persist(); });
   modeBtn.addEventListener('click', function(){ mode = (mode === 'deep' ? 'fast' : 'deep'); paintMode(); persist(); });
-  document.getElementById('newchat').addEventListener('click', () => {
+  document.getElementById('newchat').addEventListener('click', function(){
     if (controller) controller.abort();
-    messages = []; render(); persist();
+    persist();                 // save the current thread into history first
+    messages = []; activeId = null; view = 'chat'; render(); persist();
+  });
+  document.getElementById('ctxbar').addEventListener('click', function(e){
+    if (e.target.closest('#ctxoff')) { attach = false; renderCtx(); persist(); }
+    else if (e.target.closest('#ctxon')) { attach = true; renderCtx(); persist(); }
   });
 
   // Delegation: suggestions, code Copy/Insert, answer Copy, Regenerate.
   thread.addEventListener('click', function(e){
+    var del = e.target.closest('[data-del]');
+    if (del) { deleteConvo(del.getAttribute('data-del')); return; }
+    var openItem = e.target.closest('[data-open]');
+    if (openItem) { openConvo(openItem.getAttribute('data-open')); return; }
     var sug = e.target.closest('.sug');
     if (sug) { run(sug.getAttribute('data-q')); return; }
     var btn = e.target.closest('[data-act]');
@@ -704,14 +901,17 @@ export function renderWebviewHtml(apiUrl: string, scope: string): string {
   });
 
   // Messages from the extension host.
-  window.addEventListener('message', ev => {
-    const m = ev.data;
+  window.addEventListener('message', function(ev){
+    var m = ev.data;
     if (!m) return;
-    if (m.type === 'ask') run(m.question);
-    else if (m.type === 'clear') { if (controller) controller.abort(); messages = []; render(); persist(); }
+    if (m.type === 'ask') { view = 'chat'; run(m.question); }
+    else if (m.type === 'clear') { if (controller) controller.abort(); persist(); messages = []; activeId = null; view = 'chat'; render(); persist(); }
+    else if (m.type === 'editorContext') { editorCtx = m.file ? m : null; renderCtx(); }
+    else if (m.type === 'content') { if (pendingContent) { var r = pendingContent; pendingContent = null; r(m); } }
   });
 
   render();
+  renderCtx();
   vscodeApi.postMessage({ type: 'ready' });
 </script>
 </body>
