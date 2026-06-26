@@ -327,7 +327,8 @@ function buildDiagnostics(doc: vscode.TextDocument, report: any): vscode.Diagnos
   for (const f of report?.findings || []) {
     if (f.status !== "fail") continue;
     const sev = sevOf[f.severity] ?? vscode.DiagnosticSeverity.Warning;
-    const base = `${f.title} — ${f.detail}`;
+    const cite = f.ref ? `  ·  ${f.ref}` : "";
+    const base = `${f.title} — ${f.detail}${cite}`;
     const examples: string[] = f.examples || [];
     if (examples.length === 0) {
       const d = new vscode.Diagnostic(new vscode.Range(0, 0, 0, 1), base, sev);

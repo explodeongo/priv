@@ -12,7 +12,7 @@ they're instant and reproducible. (Only the *chat* step needs the model running.
 ## Walkthrough
 
 **1 — Open the broken spec.**
-Open [`product-ordering.tmf.yaml`](product-ordering.tmf.yaml). Within a moment you'll see:
+Open [`product-ordering.broken.yaml`](product-ordering.broken.yaml). Within a moment you'll see:
 - **Red squiggles** on the offending lines (Problems panel lists each rule + the fix).
 - A status-bar badge: **`TMF 0/100`**.
 
@@ -22,9 +22,9 @@ no save, no command. This is the "it checks automatically" part.
 
 **3 — See the score in the chat.**
 Open the **SynaptDI** panel (activity bar). Above the message box, next to
-**Reading `product-ordering.tmf.yaml`**, a shield pill shows:
+**Reading `product-ordering.broken.yaml`**, a shield pill shows:
 
-> 🛡 **`0/100` · 3 errors · 5 warnings**   🪄 **Auto-fix 8**
+> 🛡 **`0/100` · 3 errors · 4 warnings**   🪄 **Auto-fix 8**
 
 **4 — Auto-fix.**
 Click **`Auto-fix 8`**. The deterministic engine rewrites the spec in place

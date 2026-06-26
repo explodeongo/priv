@@ -55,32 +55,55 @@ def _iter_ops(spec: dict):
                 yield path, item, method.lower(), op
 
 
+def _is_notification(path: str) -> bool:
+    """Hub/listener endpoints follow the TMF Notification pattern, not the resource
+    pattern — exempt them from pagination / fields / 201 / etc."""
+    seg = [s for s in path.split("/") if s]
+    return bool(seg) and seg[0].lower() in ("hub", "listener")
+
+
+def _schema_props(spec: dict, schema: Any, _depth: int = 0) -> set:
+    """Property names of a schema, following $ref and allOf/oneOf/anyOf composition
+    (TMF schemas compose heavily via allOf — the 'Extensible' pattern)."""
+    if not isinstance(schema, dict) or _depth > 8:
+        return set()
+    if "$ref" in schema:
+        return _schema_props(spec, _resolve_ref(spec, schema["$ref"]), _depth + 1)
+    props = set((schema.get("properties", {}) or {}).keys())
+    for sub in (schema.get("allOf") or []) + (schema.get("oneOf") or []) + (schema.get("anyOf") or []):
+        props |= _schema_props(spec, sub, _depth + 1)
+    return props
+
+
 def check_spec(spec: dict) -> dict:
     title   = (spec.get("info", {}) or {}).get("title", "Untitled API")
     version = (spec.get("info", {}) or {}).get("version", "")
     schemas = _schemas(spec)
     findings = []
 
-    def finding(fid, title_, severity, ok, detail, examples=None):
+    def finding(fid, title_, severity, ok, detail, examples=None, ref=""):
         findings.append({
             "id": fid, "title": title_, "severity": severity,
             "status": "pass" if ok else "fail", "detail": detail,
-            "examples": (examples or [])[:5],
+            "ref": ref, "examples": (examples or [])[:5],
         })
 
-    coll_gets   = [(p, it, op) for p, it, m, op in _iter_ops(spec) if m == "get" and _is_collection(p)]
-    all_gets    = [(p, it, op) for p, it, m, op in _iter_ops(spec) if m == "get"]
-    posts       = [(p, it, op) for p, it, m, op in _iter_ops(spec) if m == "post" and _is_collection(p)]
-    deletes     = [(p, it, op) for p, it, m, op in _iter_ops(spec) if m == "delete"]
+    # Resource operations only — the Notification pattern (/hub, /listener/*) follows
+    # different TMF rules and must not be judged as resource endpoints.
+    coll_gets = [(p, it, op) for p, it, m, op in _iter_ops(spec) if m == "get" and _is_collection(p) and not _is_notification(p)]
+    all_gets  = [(p, it, op) for p, it, m, op in _iter_ops(spec) if m == "get" and not _is_notification(p)]
+    posts     = [(p, it, op) for p, it, m, op in _iter_ops(spec) if m == "post" and _is_collection(p) and not _is_notification(p)]
+    deletes   = [(p, it, op) for p, it, m, op in _iter_ops(spec) if m == "delete" and not _is_notification(p)]
 
     # R1 — Pagination (offset & limit) on collection GETs
     miss = [p for p, it, op in coll_gets if not {"offset", "limit"} <= _query_params(op, it, spec)]
     finding("pagination", "Collection GETs support offset & limit pagination", "error",
             ok=(bool(coll_gets) and not miss),
             detail=("All collection GET operations declare offset and limit." if coll_gets and not miss
-                    else "Add offset and limit query parameters to list endpoints (TMF630 §pagination)."
+                    else "Add offset and limit query parameters to list endpoints."
                     if coll_gets else "No collection GET operations found to check."),
-            examples=miss)
+            examples=miss,
+            ref="TMF630 REST API Design Guidelines — collection pagination (offset & limit)")
 
     # R2 — Sparse fieldsets (fields) on GETs
     miss = [p for p, it, op in all_gets if "fields" not in _query_params(op, it, spec)]
@@ -88,34 +111,35 @@ def check_spec(spec: dict) -> dict:
             ok=(bool(all_gets) and not miss),
             detail=("All GET operations declare the fields query parameter." if all_gets and not miss
                     else "Add a 'fields' query parameter so clients can request sparse fieldsets."),
-            examples=miss)
+            examples=miss,
+            ref="TMF630 REST API Design Guidelines — attribute selection (fields)")
 
-    # R3 — Sorting (sort) on collection GETs
+    # R3 — Sorting (sort) on collection GETs — advisory; TMF treats sort as optional
     miss = [p for p, it, op in coll_gets if "sort" not in _query_params(op, it, spec)]
-    finding("sort", "Collection GETs support a 'sort' parameter", "warning",
+    finding("sort", "Collection GETs support a 'sort' parameter", "info",
             ok=(bool(coll_gets) and not miss),
             detail=("Collection GETs declare a sort parameter." if coll_gets and not miss
-                    else "Add a 'sort' query parameter for ordering results."),
-            examples=miss)
+                    else "Optional: add a 'sort' query parameter so clients can order results."),
+            examples=miss,
+            ref="TMF630 REST API Design Guidelines — sorting (sort), recommended")
 
-    # R4 — TMF Error structure (an Error schema with code + reason)
-    err_ok = any(
-        "error" in name.lower() and isinstance(d, dict)
-        and {"code", "reason"} <= set((d.get("properties", {}) or {}).keys())
-        for name, d in schemas.items()
-    )
+    # R4 — TMF Error structure (an Error schema with code + reason); allOf-aware
+    err_ok = any("error" in name.lower() and {"code", "reason"} <= _schema_props(spec, d)
+                 for name, d in schemas.items())
     finding("error-structure", "Defines the TMF Error structure (code + reason)", "error",
             ok=err_ok,
             detail=("An Error schema with code and reason is defined." if err_ok
-                    else "Define a TMF-style Error schema (code, reason, message, status, referenceError)."))
+                    else "Define a TMF-style Error schema (code, reason, message, status, referenceError)."),
+            ref="TMF630 REST API Design Guidelines — standard Error structure")
 
-    # R5 — Polymorphism (@type present on resources)
-    typed = [n for n, d in schemas.items() if isinstance(d, dict) and "@type" in (d.get("properties", {}) or {})]
+    # R5 — Polymorphism (@type present on resources); allOf-aware
+    typed = [n for n, d in schemas.items() if "@type" in _schema_props(spec, d)]
     finding("polymorphism", "Resources expose @type for polymorphism", "warning",
             ok=bool(typed),
             detail=(f"{len(typed)} schema(s) declare @type." if typed
                     else "Add @type (and @baseType/@schemaLocation) to resource schemas per TMF630."),
-            examples=[n for n in schemas if n not in typed][:5] if not typed else [])
+            examples=[n for n in schemas if n not in typed][:5] if not typed else [],
+            ref="TMF630 REST API Design Guidelines — polymorphism (@type/@baseType)")
 
     # R6 — POST returns 201 Created
     miss = [p for p, it, op in posts if "201" not in (op.get("responses", {}) or {})]
@@ -123,32 +147,36 @@ def check_spec(spec: dict) -> dict:
             ok=(not posts or not miss),
             detail=("POST operations return 201 Created." if not miss
                     else "Create operations should return 201 with the created resource."),
-            examples=miss)
+            examples=miss,
+            ref="TMF630 REST API Design Guidelines — POST returns 201 Created")
 
-    # R7 — DELETE returns 204
-    miss = [p for p, it, op in deletes if "204" not in (op.get("responses", {}) or {})]
+    # R7 — DELETE returns 204 (or 202 if the delete is asynchronous)
+    miss = [p for p, it, op in deletes if not ({"204", "202"} & set((op.get("responses", {}) or {}).keys()))]
     finding("delete-204", "DELETE returns 204", "warning",
             ok=(not deletes or not miss),
             detail=("DELETE operations return 204 No Content." if not miss
-                    else "Delete operations should return 204 No Content."),
-            examples=miss)
+                    else "Delete operations should return 204 No Content (or 202 if asynchronous)."),
+            examples=miss,
+            ref="TMF630 REST API Design Guidelines — DELETE returns 204 No Content")
 
-    # R8 — camelCase property names (no snake_case)
+    # R8 — camelCase property names (no snake_case); allOf-aware
     snake = []
     for name, d in schemas.items():
-        for prop in (d.get("properties", {}) or {}) if isinstance(d, dict) else {}:
+        for prop in sorted(_schema_props(spec, d)):
             if "_" in prop and not prop.startswith("@") and not prop.startswith("_"):
                 snake.append(f"{name}.{prop}")
     finding("camelcase", "Property names are camelCase", "warning",
             ok=not snake,
             detail=("Property names follow camelCase." if not snake
                     else f"{len(snake)} snake_case property name(s) found; TMF630 requires camelCase."),
-            examples=snake)
+            examples=snake,
+            ref="TMF630 REST API Design Guidelines — lowerCamelCase naming")
 
     # R9 — Versioned (info.version present)
     finding("versioning", "API declares a version", "info",
             ok=bool(version),
-            detail=(f"Version {version}." if version else "Add info.version to the spec."))
+            detail=(f"Version {version}." if version else "Add info.version to the spec."),
+            ref="TMF630 REST API Design Guidelines — API versioning")
 
     # Score — weighted by severity; info rules don't affect the score.
     earned = sum(SEV_WEIGHT[f["severity"]] for f in findings if f["status"] == "pass")
