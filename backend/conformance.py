@@ -159,6 +159,7 @@ def check_spec(spec: dict) -> dict:
         "api": title,
         "version": version,
         "score": score,
+        "fixable": sum(1 for f in findings if f["status"] == "fail" and f["id"] in FIXABLE),
         "summary": {
             "passed":   sum(1 for f in findings if f["status"] == "pass"),
             "failed":   sum(1 for f in findings if f["status"] == "fail" and f["severity"] == "error"),

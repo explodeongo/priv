@@ -97,6 +97,7 @@ export function activate(context: vscode.ExtensionContext) {
       const report = res.json;
       diagnostics.set(doc.uri, buildDiagnostics(doc, report));
       updateStatus(status, report);
+      provider.pushCompliance(doc, report);
       if (!silent) {
         const s = report.summary || {};
         vscode.window.showInformationMessage(`SynaptDI · ${report.api || "spec"}: ${report.score}/100 — ${s.failed || 0} error(s), ${s.warnings || 0} warning(s). See Problems panel.`);
@@ -112,6 +113,11 @@ export function activate(context: vscode.ExtensionContext) {
       const ed = vscode.window.activeTextEditor;
       if (!ed) { vscode.window.showWarningMessage("SynaptDI: open a spec file first."); return; }
       await runCompliance(ed.document, false);
+    }),
+    // Internal: silent check of the active spec when the chat panel first loads.
+    vscode.commands.registerCommand("synaptdi._checkActive", () => {
+      const ed = vscode.window.activeTextEditor;
+      if (ed && isSpecDoc(ed.document)) runCompliance(ed.document, true);
     }),
     // auto-check spec files on save + when one becomes the active editor
     vscode.workspace.onDidSaveTextDocument((doc) => { if (isSpecDoc(doc)) runCompliance(doc, true); }),
@@ -334,7 +340,7 @@ class SynaptDIViewProvider implements vscode.WebviewViewProvider {
 
     view.webview.onDidReceiveMessage(async (msg) => {
       if (!msg || typeof msg.type !== "string") return;
-      if (msg.type === "ready") { this.ready = true; this.flush(); this.pushContext(); return; }
+      if (msg.type === "ready") { this.ready = true; this.flush(); this.pushContext(); vscode.commands.executeCommand("synaptdi._checkActive"); return; }
       if (msg.type === "copy") {
         await vscode.env.clipboard.writeText(String(msg.text ?? ""));
         vscode.window.setStatusBarMessage("SynaptDI: copied to clipboard", 1500);
@@ -364,6 +370,11 @@ class SynaptDIViewProvider implements vscode.WebviewViewProvider {
         this.view?.webview.postMessage({ type: "content", code, file, lang });
         return;
       }
+      if (msg.type === "command" && typeof msg.command === "string") {
+        const allow = ["synaptdi.fixAll", "synaptdi.checkCompliance", "synaptdi.scanWorkspace"];
+        if (allow.indexOf(msg.command) >= 0) vscode.commands.executeCommand(msg.command);
+        return;
+      }
     });
   }
 
@@ -384,6 +395,22 @@ class SynaptDIViewProvider implements vscode.WebviewViewProvider {
       lang: ed.document.languageId || "",
       lines: ed.document.lineCount,
       hasSelection: !!(sel && !sel.isEmpty),
+      isSpec: isSpecDoc(ed.document),
+    });
+  }
+
+  // Push the live TMF compliance score for a spec to the webview (chat pill).
+  pushCompliance(doc: vscode.TextDocument, report: any) {
+    if (!this.view || !this.ready) return;
+    const s = (report && report.summary) || {};
+    this.view.webview.postMessage({
+      type: "compliance",
+      file: doc.fileName.split(/[\\/]/).pop() || "",
+      score: (report && report.score) || 0,
+      failed: s.failed || 0,
+      warnings: s.warnings || 0,
+      api: (report && report.api) || "",
+      fixable: (report && report.fixable) || 0,
     });
   }
 
@@ -517,6 +544,13 @@ export function renderWebviewHtml(apiUrl: string, scope: string): string {
   .ctxchip svg { flex:0 0 auto; opacity:.85; }
   .ctxchip .x { background:transparent; border:none; color:inherit; cursor:pointer; font-size:13px; line-height:1; padding:0 1px 0 2px; opacity:.65; }
   .ctxchip .x:hover { opacity:1; color: var(--vscode-errorForeground); }
+  .compill { display:inline-flex; align-items:center; gap:4px; font-size:11px; cursor:pointer;
+             border:1px solid var(--vscode-panel-border); border-radius:6px; padding:3px 7px; color: var(--vscode-foreground); }
+  .compill b { font-weight:700; } .compill svg, .fixbtn svg { flex:0 0 auto; }
+  .fixbtn { display:inline-flex; align-items:center; gap:4px; font-size:11px; cursor:pointer; border:none; border-radius:6px; padding:3px 8px;
+            background: var(--vscode-button-secondaryBackground, var(--vscode-button-background));
+            color: var(--vscode-button-secondaryForeground, var(--vscode-button-foreground)); }
+  .fixbtn:hover { background: var(--vscode-button-hoverBackground); }
 </style>
 </head>
 <body>
@@ -559,6 +593,7 @@ export function renderWebviewHtml(apiUrl: string, scope: string): string {
   let editorCtx = null;                // {file,lang,lines,hasSelection} pushed by the host editor
   let attach = (saved.attach !== false);   // auto-read the open file as context (default on)
   let pendingContent = null;           // resolver awaiting the host's file content
+  let comp = null;                     // {file,score,failed,warnings,api,fixable} live TMF score for the open spec
   const FENCE = String.fromCharCode(96, 96, 96);   // triple backtick, without touching the template literal
 
   const thread = document.getElementById('thread');
@@ -777,20 +812,40 @@ export function renderWebviewHtml(apiUrl: string, scope: string): string {
   function ctxIcon(){
     return '<svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"><path d="M9 1.6H4a1 1 0 0 0-1 1v10.8a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1V5.6L9 1.6Z"/><path d="M9 1.6v4h4"/></svg>';
   }
+  function shieldIcon(col){
+    return '<svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="' + col + '" stroke-width="1.3" stroke-linejoin="round"><path d="M8 1.5l5 2v4c0 3.2-2.1 5.5-5 6.9C5.1 13 3 10.7 3 7.5v-4l5-2Z"/></svg>';
+  }
+  function wandIcon(){
+    return '<svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><path d="M3 13L10 6"/><path d="M9.5 3.5l3 3"/><path d="M11.6 1.4l.4 1.2 1.2.4-1.2.4-.4 1.2-.4-1.2-1.2-.4 1.2-.4.4-1.2Z"/></svg>';
+  }
+  function scoreColor(s){ return s >= 90 ? '#3fb950' : (s >= 70 ? '#d29922' : '#f85149'); }
   function renderCtx(){
     var bar = document.getElementById('ctxbar');
     if (!bar) return;
     if (!editorCtx || !editorCtx.file) { bar.innerHTML = ''; return; }
+    var html = '';
     var sub = editorCtx.hasSelection ? 'selection' : (editorCtx.lines ? editorCtx.lines + ' lines' : 'file');
     if (attach) {
-      bar.innerHTML = '<span class="ctxchip on" title="SynaptDI reads this file when you ask">'
+      html += '<span class="ctxchip on" title="SynaptDI reads this file when you ask">'
         + ctxIcon() + 'Reading <b>' + esc(editorCtx.file) + '</b>'
         + '<span style="opacity:.65">' + esc(sub) + '</span>'
         + '<button class="x" id="ctxoff" title="Ask without the open file">\\u00d7</button></span>';
     } else {
-      bar.innerHTML = '<span class="ctxchip off" id="ctxon" title="Include the open file as context">'
+      html += '<span class="ctxchip off" id="ctxon" title="Include the open file as context">'
         + ctxIcon() + 'Use <b>' + esc(editorCtx.file) + '</b></span>';
     }
+    if (editorCtx.isSpec && comp && comp.file === editorCtx.file) {
+      var col = scoreColor(comp.score);
+      var bits = [];
+      if (comp.failed) bits.push(comp.failed + ' error' + (comp.failed === 1 ? '' : 's'));
+      if (comp.warnings) bits.push(comp.warnings + ' warning' + (comp.warnings === 1 ? '' : 's'));
+      var issues = bits.join(' · ') || 'all checks pass';
+      html += '<span class="compill" id="compcheck" title="' + esc((comp.api || 'spec') + ' — TMF630 compliance, click for details') + '" style="border-color:' + col + '">'
+        + shieldIcon(col) + '<b style="color:' + col + '">' + comp.score + '/100</b>'
+        + '<span style="opacity:.7">' + esc(issues) + '</span></span>';
+      if (comp.fixable) html += '<button class="fixbtn" id="fixactive" title="Auto-fix the mechanical issues — deterministic, no AI">' + wandIcon() + 'Auto-fix ' + comp.fixable + '</button>';
+    }
+    bar.innerHTML = html;
   }
   function requestContent(){
     return new Promise(function(resolve){
@@ -872,6 +927,8 @@ export function renderWebviewHtml(apiUrl: string, scope: string): string {
   document.getElementById('ctxbar').addEventListener('click', function(e){
     if (e.target.closest('#ctxoff')) { attach = false; renderCtx(); persist(); }
     else if (e.target.closest('#ctxon')) { attach = true; renderCtx(); persist(); }
+    else if (e.target.closest('#fixactive')) { vscodeApi.postMessage({ type: 'command', command: 'synaptdi.fixAll' }); }
+    else if (e.target.closest('#compcheck')) { vscodeApi.postMessage({ type: 'command', command: 'synaptdi.checkCompliance' }); }
   });
 
   // Delegation: suggestions, code Copy/Insert, answer Copy, Regenerate.
@@ -906,7 +963,8 @@ export function renderWebviewHtml(apiUrl: string, scope: string): string {
     if (!m) return;
     if (m.type === 'ask') { view = 'chat'; run(m.question); }
     else if (m.type === 'clear') { if (controller) controller.abort(); persist(); messages = []; activeId = null; view = 'chat'; render(); persist(); }
-    else if (m.type === 'editorContext') { editorCtx = m.file ? m : null; renderCtx(); }
+    else if (m.type === 'editorContext') { editorCtx = m.file ? m : null; if (!editorCtx || (comp && comp.file !== editorCtx.file)) comp = null; renderCtx(); }
+    else if (m.type === 'compliance') { comp = m; renderCtx(); }
     else if (m.type === 'content') { if (pendingContent) { var r = pendingContent; pendingContent = null; r(m); } }
   });
 
