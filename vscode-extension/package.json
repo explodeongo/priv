@@ -2,7 +2,7 @@
   "name": "synaptdi",
   "displayName": "SynaptDI — Domain Assistant",
   "description": "Ask TM Forum / domain questions and get cited answers without leaving VS Code.",
-  "version": "0.14.0",
+  "version": "0.14.1",
   "publisher": "dibuai",
   "repository": {
     "type": "git",

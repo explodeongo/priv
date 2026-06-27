@@ -263,8 +263,13 @@ export function activate(context: vscode.ExtensionContext) {
   const scanChannel = vscode.window.createOutputChannel("SynaptDI Compliance");
   context.subscriptions.push(scanChannel,
     vscode.commands.registerCommand("synaptdi.scanWorkspace", async () => {
-      const uris = await vscode.workspace.findFiles("**/*.{yaml,yml,json}", "**/{node_modules,out,.next,dist,.git}/**", 800);
-      if (!uris.length) { vscode.window.showInformationMessage("SynaptDI: no YAML/JSON files in the workspace."); return; }
+      let uris = await vscode.workspace.findFiles("**/*.{yaml,yml,json}", "**/{node_modules,out,.next,dist,.git}/**", 800);
+      if (!uris.length) {
+        uris = vscode.workspace.textDocuments
+          .filter((d) => d.uri.scheme === "file" && /\.(ya?ml|json)$/i.test(d.fileName))
+          .map((d) => d.uri);
+      }
+      if (!uris.length) { vscode.window.showInformationMessage("SynaptDI: open a folder (or the spec files) to scan, then run it again."); return; }
       const rows: { file: string; score: number; failed: number; warnings: number }[] = [];
       let reachedBackend = true;
       await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: "SynaptDI: scanning specs for TM Forum compliance…" }, async (progress) => {
@@ -300,8 +305,14 @@ export function activate(context: vscode.ExtensionContext) {
   // ── API estate X-ray: structural + profile conformance across the whole workspace ──
   context.subscriptions.push(
     vscode.commands.registerCommand("synaptdi.xray", async () => {
-      const uris = await vscode.workspace.findFiles("**/*.{yaml,yml,json}", "**/{node_modules,out,.next,dist,.git,venv}/**", 400);
-      if (!uris.length) { vscode.window.showInformationMessage("SynaptDI: no YAML/JSON files in the workspace to X-ray."); return; }
+      let uris = await vscode.workspace.findFiles("**/*.{yaml,yml,json}", "**/{node_modules,out,.next,dist,.git,venv}/**", 400);
+      if (!uris.length) {
+        // No folder open (or nothing matched) — fall back to the spec files open in tabs.
+        uris = vscode.workspace.textDocuments
+          .filter((d) => d.uri.scheme === "file" && /\.(ya?ml|json)$/i.test(d.fileName))
+          .map((d) => d.uri);
+      }
+      if (!uris.length) { vscode.window.showInformationMessage("SynaptDI: open the folder (or the spec files) you want to X-ray, then run it again."); return; }
       const specs: { filename: string; content: string }[] = [];
       let report: any = null, reached = true;
       await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: "SynaptDI: building the API estate X-ray…" }, async (progress) => {
