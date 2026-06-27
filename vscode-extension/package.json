@@ -2,7 +2,7 @@
   "name": "synaptdi",
   "displayName": "SynaptDI — Domain Assistant",
   "description": "Ask TM Forum / domain questions and get cited answers without leaving VS Code.",
-  "version": "0.12.0",
+  "version": "0.14.0",
   "publisher": "dibuai",
   "repository": {
     "type": "git",
@@ -94,6 +94,12 @@
         "title": "TMF Profile Report (compare to canonical spec)",
         "category": "SynaptDI",
         "icon": "$(git-compare)"
+      },
+      {
+        "command": "synaptdi.xray",
+        "title": "API Estate X-ray (portfolio report)",
+        "category": "SynaptDI",
+        "icon": "$(dashboard)"
       }
     ],
     "submenus": [
@@ -146,9 +152,14 @@
       ],
       "view/title": [
         {
-          "command": "synaptdi.newChat",
+          "command": "synaptdi.xray",
           "when": "view == synaptdi.chat",
           "group": "navigation@1"
+        },
+        {
+          "command": "synaptdi.newChat",
+          "when": "view == synaptdi.chat",
+          "group": "navigation@2"
         }
       ]
     },

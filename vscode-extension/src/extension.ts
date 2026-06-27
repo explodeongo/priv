@@ -297,6 +297,41 @@ export function activate(context: vscode.ExtensionContext) {
     })
   );
 
+  // ── API estate X-ray: structural + profile conformance across the whole workspace ──
+  context.subscriptions.push(
+    vscode.commands.registerCommand("synaptdi.xray", async () => {
+      const uris = await vscode.workspace.findFiles("**/*.{yaml,yml,json}", "**/{node_modules,out,.next,dist,.git,venv}/**", 400);
+      if (!uris.length) { vscode.window.showInformationMessage("SynaptDI: no YAML/JSON files in the workspace to X-ray."); return; }
+      const specs: { filename: string; content: string }[] = [];
+      let report: any = null, reached = true;
+      await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: "SynaptDI: building the API estate X-ray…" }, async (progress) => {
+        for (const uri of uris) {
+          let doc: vscode.TextDocument;
+          try { doc = await vscode.workspace.openTextDocument(uri); } catch { continue; }
+          if (!isSpecDoc(doc)) continue;
+          const text = doc.getText();
+          if (text.length > 1000000) continue;
+          specs.push({ filename: vscode.workspace.asRelativePath(uri), content: text });
+        }
+        if (!specs.length) return;
+        progress.report({ message: `analysing ${specs.length} spec(s)…` });
+        try {
+          const res = await postJson(cfg().apiUrl + "/conformance/portfolio", { specs });
+          if (res.ok) report = res.json; else reached = false;
+        } catch { reached = false; }
+      });
+      if (!reached) { vscode.window.showWarningMessage("SynaptDI: couldn't reach the backend at " + cfg().apiUrl + "."); return; }
+      if (!specs.length) { vscode.window.showInformationMessage("SynaptDI: no OpenAPI specs found in the workspace."); return; }
+      if (!report) { vscode.window.showWarningMessage("SynaptDI: the X-ray returned no report."); return; }
+      const md = report.markdown || "# SynaptDI — API estate X-ray\n(empty)";
+      const rep = await vscode.workspace.openTextDocument({ language: "markdown", content: md });
+      await vscode.window.showTextDocument(rep, { preview: false });
+      try { await vscode.commands.executeCommand("markdown.showPreviewToSide"); } catch {}
+      const s = report.summary || {};
+      vscode.window.showInformationMessage(`SynaptDI X-ray: ${s.apis} API(s), avg structure ${s.avg_structural}/100, avg TMF coverage ${s.avg_coverage}%.`);
+    })
+  );
+
   // check whatever's already open
   const open = vscode.window.activeTextEditor;
   if (open && isSpecDoc(open.document)) runCompliance(open.document, true);
@@ -501,6 +536,7 @@ class SynaptDIViewProvider implements vscode.WebviewViewProvider {
       fixable: (report && report.fixable) || 0,
       profile: det ? {
         tmf: det.tmf, title: det.title, version: det.version, coverage: p.coverage,
+        confidence: det.confidence,
         missingOps: (p.operations && p.operations.missing.length) || 0,
         missingFields: (p.resource && p.resource.missing.length) || 0,
       } : null,
@@ -953,7 +989,7 @@ export function renderWebviewHtml(apiUrl: string, scope: string): string {
           + shieldIcon(col) + '<b style="color:' + col + '">' + comp.score + '/100</b>'
           + '<span style="opacity:.7">' + esc(issues) + '</span></span>';
         if (comp.fixable) html += '<button class="fixbtn" id="fixactive" title="Auto-fix the mechanical issues — deterministic, no AI">' + wandIcon() + 'Auto-fix ' + comp.fixable + '</button>';
-        if (comp.profile) {
+        if (comp.profile && comp.profile.confidence === 'high') {
           var pcol = scoreColor(comp.profile.coverage);
           html += '<span class="compill" id="profilepill" title="' + esc('Implements ' + comp.profile.coverage + '% of ' + comp.profile.tmf + ' ' + comp.profile.title + ' v' + comp.profile.version + ' — ' + comp.profile.missingOps + ' operations and ' + comp.profile.missingFields + ' fields missing. Click for the gap report.') + '" style="border-color:' + pcol + '">'
             + diffIcon(pcol) + '<b style="color:' + pcol + '">vs ' + esc(comp.profile.tmf) + '</b>'

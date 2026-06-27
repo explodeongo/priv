@@ -30,6 +30,7 @@ import chromadb
 import ingest   # reuse the ingestion parsers: parse_openapi_spec, parse_markdown, chunk_text, embed_batch, …
 import conformance   # TMF630 conformance rule engine
 import tmf_profile   # profile-aware conformance (diff vs canonical TMF specs)
+import xray          # API estate X-ray (portfolio roll-up)
 from vectorstore import get_store, reset_store   # backend-agnostic vector store (Chroma today)
 
 _chroma_lock = threading.Lock()   # protects singleton + upsert/query overlap
@@ -309,6 +310,7 @@ def startup_init():
     if os.getenv("WARM_MODELS", "1") != "0":
         threading.Thread(target=_warm_models, daemon=True).start()
     threading.Thread(target=_scheduler_loop, daemon=True).start()   # scheduled KB auto-refresh
+    tmf_profile.warm_index()                                        # build the profile index off the request path
 
 # ── Vector store ─────────────────────────────────────────────────────────────────
 # Pre-built mapping of "TMF622" → "TMF622-ProductOrdering-v4.0.0.swagger.json"
@@ -1365,6 +1367,8 @@ def conformance_check_text(req: ConformanceTextReq):
     """Same TMF630 check as /conformance but from a JSON body — used by the VS Code
     extension to validate the active editor's spec without a multipart upload."""
     text = req.content or ""
+    if len(text) > 2_000_000:
+        raise HTTPException(413, "Spec too large to check (over 2 MB).")
     spec = None
     try:
         spec = json.loads(text)
@@ -1392,6 +1396,8 @@ def conformance_profile(req: ConformanceTextReq):
     """Detect which TMF API a spec is and diff it against the canonical TMF spec
     (deterministic, no LLM). Powers the 'vs TMFxxx reference' coverage signal."""
     text = req.content or ""
+    if len(text) > 2_000_000:
+        raise HTTPException(413, "Spec too large to check (over 2 MB).")
     spec = None
     try:
         spec = json.loads(text)
@@ -1404,6 +1410,19 @@ def conformance_profile(req: ConformanceTextReq):
     if not isinstance(spec, dict):
         raise HTTPException(400, "Could not parse as an OpenAPI/Swagger spec (JSON or YAML).")
     return tmf_profile.compare_to_canonical(spec)
+
+
+class PortfolioReq(BaseModel):
+    specs: list = []     # [{filename, content}, …]
+
+@app.post("/conformance/portfolio")
+def conformance_portfolio(req: PortfolioReq):
+    """API estate X-ray: structural + profile conformance across many specs, rolled up
+    into a board-ready report (markdown included). Deterministic, no LLM."""
+    specs = (req.specs or [])[:300]
+    report = xray.build_portfolio(specs)
+    report["markdown"] = xray.render_markdown(report)
+    return report
 
 class ConformanceFixReq(BaseModel):
     content: str

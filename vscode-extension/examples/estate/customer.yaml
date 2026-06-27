@@ -1,0 +1,54 @@
+openapi: 3.0.3
+info:
+  title: Customer API
+  version: 2.0.0
+paths:
+  /customer:
+    get:
+      summary: List customers
+      parameters:
+        - { name: offset, in: query, schema: { type: integer } }
+        - { name: limit, in: query, schema: { type: integer } }
+        - { name: fields, in: query, schema: { type: string } }
+      responses:
+        '200': { description: A list of customers. }
+    post:
+      summary: Create a customer
+      responses:
+        '201': { description: Created. }
+  /customer/{id}:
+    get:
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+        - { name: fields, in: query, schema: { type: string } }
+      responses:
+        '200': { description: A customer. }
+    patch:
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        '200': { description: Updated. }
+    delete:
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        '204': { description: Deleted. }
+components:
+  schemas:
+    Customer:
+      type: object
+      properties:
+        id: { type: string }
+        href: { type: string }
+        name: { type: string }
+        status: { type: string }
+        '@type': { type: string }
+        engagedParty: { type: object }
+        relatedParty: { type: array, items: { type: object } }
+        contactMedium: { type: array, items: { type: object } }
+        account: { type: array, items: { type: object } }
+    Error:
+      type: object
+      properties:
+        code: { type: string }
+        reason: { type: string }

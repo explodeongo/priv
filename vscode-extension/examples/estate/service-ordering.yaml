@@ -1,0 +1,23 @@
+openapi: 3.0.3
+info:
+  title: Order Management API
+  version: 1.0.0
+paths:
+  /serviceOrder:
+    get:
+      summary: List service orders
+      parameters:
+        - { name: fields, in: query, schema: { type: string } }
+      responses:
+        '200': { description: A list of service orders. }
+    post:
+      summary: Create a service order
+      responses:
+        '201': { description: Created. }
+components:
+  schemas:
+    ServiceOrder:
+      type: object
+      properties:
+        id: { type: string }
+        state: { type: string }
