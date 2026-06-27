@@ -129,6 +129,35 @@ export function activate(context: vscode.ExtensionContext) {
     })
   );
 
+  // ── Profile-aware conformance: diff the active spec vs its canonical TMF spec ──
+  const profileChannel = vscode.window.createOutputChannel("SynaptDI · TMF profile");
+  context.subscriptions.push(profileChannel,
+    vscode.commands.registerCommand("synaptdi.profileReport", async () => {
+      const ed = vscode.window.activeTextEditor;
+      if (!ed || !isSpecDoc(ed.document)) { vscode.window.showWarningMessage("SynaptDI: open a TMF OpenAPI spec first."); return; }
+      try {
+        const res = await postJson(cfg().apiUrl + "/conformance/profile", { content: ed.document.getText(), filename: ed.document.fileName.split(/[\\/]/).pop() || "" });
+        if (!res.ok) { vscode.window.showWarningMessage("SynaptDI: profile check failed (" + res.status + ")."); return; }
+        const p = res.json;
+        if (!p || !p.detected) { vscode.window.showInformationMessage("SynaptDI: this spec doesn't match a known TMF API."); return; }
+        const d = p.detected, ch = profileChannel;
+        ch.clear();
+        ch.appendLine("SynaptDI — profile-aware conformance");
+        ch.appendLine("──────────────────────────────────────────────");
+        ch.appendLine("Detected:           " + d.tmf + "  " + d.title + "  v" + d.version + "   (confidence " + d.confidence + ")");
+        ch.appendLine("Reference coverage: " + p.coverage + "%  of the official " + d.tmf);
+        ch.appendLine("");
+        ch.appendLine("Missing operations (" + p.operations.missing.length + " of " + p.operations.total + "):");
+        if (!p.operations.missing.length) ch.appendLine("   none — every canonical operation is present");
+        p.operations.missing.forEach((o: any) => ch.appendLine("   " + (o.method + "    ").slice(0, 7) + o.path));
+        ch.appendLine("");
+        ch.appendLine("Resource '" + p.resource.name + "':  " + p.resource.user_attrs + " of " + p.resource.canonical_attrs + " attributes present");
+        if (p.resource.missing.length) ch.appendLine("Missing attributes (" + p.resource.missing.length + "):  " + p.resource.missing.join(", "));
+        ch.show(true);
+      } catch { vscode.window.showWarningMessage("SynaptDI: couldn't reach the backend at " + cfg().apiUrl + "."); }
+    })
+  );
+
   // ── Live compliance diagnostics (deterministic TMF630 — no model, instant) ──
   const diagnostics = vscode.languages.createDiagnosticCollection("synaptdi");
   const status = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
@@ -426,7 +455,7 @@ class SynaptDIViewProvider implements vscode.WebviewViewProvider {
         return;
       }
       if (msg.type === "command" && typeof msg.command === "string") {
-        const allow = ["synaptdi.fixAll", "synaptdi.checkCompliance", "synaptdi.scanWorkspace"];
+        const allow = ["synaptdi.fixAll", "synaptdi.checkCompliance", "synaptdi.scanWorkspace", "synaptdi.profileReport"];
         if (allow.indexOf(msg.command) >= 0) vscode.commands.executeCommand(msg.command);
         return;
       }
@@ -460,6 +489,8 @@ class SynaptDIViewProvider implements vscode.WebviewViewProvider {
   pushCompliance(doc: vscode.TextDocument, report: any) {
     if (!this.view || !this.ready) return;
     const s = (report && report.summary) || {};
+    const p = report && report.profile;
+    const det = p && p.detected;
     this.view.webview.postMessage({
       type: "compliance",
       file: doc.fileName.split(/[\\/]/).pop() || "",
@@ -468,6 +499,11 @@ class SynaptDIViewProvider implements vscode.WebviewViewProvider {
       warnings: s.warnings || 0,
       api: (report && report.api) || "",
       fixable: (report && report.fixable) || 0,
+      profile: det ? {
+        tmf: det.tmf, title: det.title, version: det.version, coverage: p.coverage,
+        missingOps: (p.operations && p.operations.missing.length) || 0,
+        missingFields: (p.resource && p.resource.missing.length) || 0,
+      } : null,
     });
   }
 
@@ -888,6 +924,9 @@ export function renderWebviewHtml(apiUrl: string, scope: string): string {
   function wandIcon(){
     return '<svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><path d="M3 13L10 6"/><path d="M9.5 3.5l3 3"/><path d="M11.6 1.4l.4 1.2 1.2.4-1.2.4-.4 1.2-.4-1.2-1.2-.4 1.2-.4.4-1.2Z"/></svg>';
   }
+  function diffIcon(col){
+    return '<svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="' + col + '" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><circle cx="4.5" cy="4.5" r="2.2"/><circle cx="11.5" cy="11.5" r="2.2"/><path d="M4.5 6.7v5.3M11.5 9.3V4"/></svg>';
+  }
   function scoreColor(s){ return s >= 90 ? '#3fb950' : (s >= 70 ? '#d29922' : '#f85149'); }
   function renderCtx(){
     var bar = document.getElementById('ctxbar');
@@ -914,6 +953,12 @@ export function renderWebviewHtml(apiUrl: string, scope: string): string {
           + shieldIcon(col) + '<b style="color:' + col + '">' + comp.score + '/100</b>'
           + '<span style="opacity:.7">' + esc(issues) + '</span></span>';
         if (comp.fixable) html += '<button class="fixbtn" id="fixactive" title="Auto-fix the mechanical issues — deterministic, no AI">' + wandIcon() + 'Auto-fix ' + comp.fixable + '</button>';
+        if (comp.profile) {
+          var pcol = scoreColor(comp.profile.coverage);
+          html += '<span class="compill" id="profilepill" title="' + esc('Implements ' + comp.profile.coverage + '% of ' + comp.profile.tmf + ' ' + comp.profile.title + ' v' + comp.profile.version + ' — ' + comp.profile.missingOps + ' operations and ' + comp.profile.missingFields + ' fields missing. Click for the gap report.') + '" style="border-color:' + pcol + '">'
+            + diffIcon(pcol) + '<b style="color:' + pcol + '">vs ' + esc(comp.profile.tmf) + '</b>'
+            + '<span style="opacity:.75">' + comp.profile.coverage + '%</span></span>';
+        }
       }
     }
     for (var i = 0; i < extraFiles.length; i++) {
@@ -1005,6 +1050,7 @@ export function renderWebviewHtml(apiUrl: string, scope: string): string {
     else if (e.target.closest('#ctxon')) { attach = true; renderCtx(); persist(); }
     else if (e.target.closest('#fixactive')) { vscodeApi.postMessage({ type: 'command', command: 'synaptdi.fixAll' }); }
     else if (e.target.closest('#compcheck')) { vscodeApi.postMessage({ type: 'command', command: 'synaptdi.checkCompliance' }); }
+    else if (e.target.closest('#profilepill')) { vscodeApi.postMessage({ type: 'command', command: 'synaptdi.profileReport' }); }
     else if (e.target.closest('#addfile')) { vscodeApi.postMessage({ type: 'pickFiles' }); }
     else { var rm = e.target.closest('[data-rmfile]'); if (rm) { extraFiles.splice(parseInt(rm.getAttribute('data-rmfile'), 10), 1); renderCtx(); } }
   });

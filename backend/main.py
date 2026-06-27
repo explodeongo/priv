@@ -29,6 +29,7 @@ from pydantic import BaseModel
 import chromadb
 import ingest   # reuse the ingestion parsers: parse_openapi_spec, parse_markdown, chunk_text, embed_batch, …
 import conformance   # TMF630 conformance rule engine
+import tmf_profile   # profile-aware conformance (diff vs canonical TMF specs)
 from vectorstore import get_store, reset_store   # backend-agnostic vector store (Chroma today)
 
 _chroma_lock = threading.Lock()   # protects singleton + upsert/query overlap
@@ -1379,7 +1380,30 @@ def conformance_check_text(req: ConformanceTextReq):
         raise HTTPException(400, "Not an OpenAPI spec — no paths or schemas found.")
     report = conformance.check_spec(spec)
     report["filename"] = req.filename
+    try:
+        report["profile"] = tmf_profile.compare_to_canonical(spec)
+    except Exception:
+        report["profile"] = {"detected": None}
     return report
+
+
+@app.post("/conformance/profile")
+def conformance_profile(req: ConformanceTextReq):
+    """Detect which TMF API a spec is and diff it against the canonical TMF spec
+    (deterministic, no LLM). Powers the 'vs TMFxxx reference' coverage signal."""
+    text = req.content or ""
+    spec = None
+    try:
+        spec = json.loads(text)
+    except Exception:
+        try:
+            import yaml
+            spec = yaml.safe_load(text)
+        except Exception:
+            spec = None
+    if not isinstance(spec, dict):
+        raise HTTPException(400, "Could not parse as an OpenAPI/Swagger spec (JSON or YAML).")
+    return tmf_profile.compare_to_canonical(spec)
 
 class ConformanceFixReq(BaseModel):
     content: str
@@ -2134,6 +2158,7 @@ def _kb_refresh_job(mode: str = "selective", domain: Optional[str] = None):
             reset_store()
             _spec_map = None; _spec_names = []
         _KB_PATHS.clear()                      # KB files changed → rebuild preview path index lazily
+        tmf_profile.clear_index()              # canonical specs may have changed → rebuild the profile index
         cache_clear()
         PROCESSING_STATUS["__kb_refresh__"] = {"status": "indexed", "mode": mode, "domain": domain or "all", **result}
         return result
