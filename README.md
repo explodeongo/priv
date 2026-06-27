@@ -1,39 +1,101 @@
 # SynaptDI
 
-**Synapt Domain Intelligence — enterprise domain knowledge at your fingertips.**
+**Synapt Domain Intelligence — a local TM Forum knowledge assistant *and* an autonomous Open API compliance agent.**
 
-Ask TM Forum questions in plain English and get accurate, **cited** answers grounded in the actual Open API spec files — with links back to the source on GitHub. Runs **entirely on local infrastructure** via Ollama: no cloud API, no per-query cost, no data leaving your environment.
+SynaptDI does two things, both entirely on local infrastructure (Ollama + ChromaDB — no cloud API, no per-query cost, no data leaving your environment):
+
+1. **Answers** TM Forum questions in plain English, with citations back to the actual Open API spec files.
+2. **Checks, scores, and fixes** your own API specs against the TM Forum standard — and tells you exactly how far they are from the *real* TMF API they're meant to implement.
+
+> **The proof that matters:** the compliance engine is validated against **169 of TM Forum's own official specs** — they score **99.9/100 on average** (168 at a perfect 100). It agrees with TM Forum's published catalogue, so its verdict on *your* spec is trustworthy — and it's fully deterministic (no AI in the scoring), so it's instant, free, repeatable, and auditable.
 
 ```
-"What mandatory fields does a Product Order have in TMF622?"
-"What's the difference between TMF620 and TMF633?"
-"How do I handle pagination in TM Forum Open APIs?"
-"Which ODA component handles trouble tickets?"
+Ask it:                                   Point it at your spec:
+"What fields does a Product Order          → "Structure 100/100, but only 26% of the
+ have in TMF622?"                             real TMF641 — missing the cancel-order
+"Difference between TMF620 and TMF633?"       operation and 21 fields. [Auto-fix]"
+"How does pagination work in TMF?"         → an estate-wide X-ray of every API you own.
 ```
+
+---
+
+## Table of contents
+- [Two halves, one engine](#two-halves-one-engine)
+- [Where it runs](#where-it-runs)
+- [The compliance agent](#the-compliance-agent)
+- [How it works](#how-it-works)
+- [Prerequisites](#prerequisites)
+- [Quick start](#quick-start-macos--linux)
+- [The VS Code extension](#the-vs-code-extension)
+- [Command-line tools](#command-line-tools)
+- [Configuration](#configuration)
+- [Project structure](#project-structure)
+- [API reference](#api-reference)
+- [Troubleshooting](#troubleshooting)
+
+---
+
+## Two halves, one engine
+
+| | **Domain assistant** (RAG) | **Compliance agent** (deterministic) |
+|---|---|---|
+| Purpose | Understand TM Forum | Conform to TM Forum |
+| Powered by | Local LLM over the TMF corpus | A rules + diff engine — **no AI** |
+| Gives you | Cited answers, follow-ups | A 0–100 score, the gaps, an auto-fix |
+| Trust model | Grounded + cited | Validated against 169 official specs |
+
+The same backend serves both, and both are exposed in the **web app**, the **VS Code extension**, and the **CLI**.
+
+---
+
+## Where it runs
+
+- **Web app** (`http://localhost:3000`) — Chat, Documents, **Conformance & X-ray**, Admin, Settings.
+- **VS Code extension** (`vscode-extension/`) — the agent in your editor: ask about the file you're writing, see a live compliance score, one-click fix, and run an estate X-ray. See [The VS Code extension](#the-vs-code-extension).
+- **CLI** (`backend/*.py`) — `validate_conformance.py`, `xray.py`, `synaptdi_check.py` for CI gates and folder scans. See [Command-line tools](#command-line-tools).
+
+---
+
+## The compliance agent
+
+Everything here is **deterministic and offline** — it never calls the LLM, so results are identical every run and safe to gate a CI pipeline on.
+
+### 1. TMF630 structural conformance
+Grades any OpenAPI / Swagger spec against the TM Forum API Design Guidelines (TMF630) — collection pagination (`offset`/`limit`), sparse fieldsets (`fields`), sorting, the standard `Error` structure, `@type` polymorphism, `201`/`204` status codes, `lowerCamelCase` naming, versioning — out of 100. **Every finding cites the TMF630 rule it enforces.** Engine: `backend/conformance.py`.
+
+### 2. Profile-aware conformance — *the differentiator*
+Detects **which** TMF API your spec is trying to be (e.g. TMF641 Service Ordering) and diffs it against the **real canonical spec** shipped in `backend/data/`, reporting the exact operations and resource attributes you're missing. This is something a generic OpenAPI linter cannot do — it requires TM Forum's whole spec catalogue as ground truth. Engine: `backend/tmf_profile.py`. A confidence gate means it never mislabels a non-TMF file.
+
+### 3. Auto-fix
+Deterministically rewrites a spec to satisfy the fixable TMF630 rules (adds the missing query params, the `Error` schema, `@type`, the right status codes, camelCases names) and re-scores it. The *same* engine that flags a violation is the one that fixes it. Endpoint: `POST /conformance/fix`.
+
+### 4. API estate X-ray
+Roll the above across a whole folder/portfolio of specs into one board-ready report — every API, its structural score, its TMF coverage, and its top gaps — sorted worst-first. Engine: `backend/xray.py`; endpoint `POST /conformance/portfolio`; CLI `python xray.py <dir>`.
+
+```
+3 APIs analysed · avg structure 77/100 · avg TMF coverage 37% · 1 fully compliant
+
+| API                | Structure | TMF profile  | Coverage | Top gaps                          |
+|--------------------|-----------|--------------|----------|-----------------------------------|
+| Order Management   | 50/100    | TMF641 v4.1  | 16%      | 6 ops, 22 fields (cancellationReason…) |
+| Trouble Ticket     | 80/100    | TMF621 v5.0  | 22%      | 7 ops, 22 fields (attachment, channel…) |
+| Customer           | 100/100   | TMF629 v5.0  | 72%      | 9 fields (agreement, creditProfile…)    |
+```
+
+### Why you can trust it
+- **Validated:** `python validate_conformance.py` runs the engine over every canonical v4/v5 TMF spec — currently **169 specs, avg 99.9, 0 below the gate**. It exits non-zero if any official spec regresses, so it doubles as a CI guard for the engine itself.
+- **Tested:** `python test_conformance.py` — 14 unit tests locking in the rules, the auto-fixer, and profile detection.
 
 ---
 
 ## How it works
 
-SynaptDI is a Retrieval-Augmented Generation (RAG) system over the TM Forum Open API corpus:
+**The assistant (RAG):**
+1. **Ingest** — `ingest.py` clones the TM Forum Open API repo set (TMF620–TMF937 + ODA Canvas + design-guideline/data-model docs), parses each spec into text, embeds it with `nomic-embed-text`, and stores it in ChromaDB.
+2. **Retrieve** — on each question the backend detects which spec(s) you mean — by number (`TMF641`) or by name (`Product Catalog Management API`) — pulls that spec's chunks directly, then fills the rest with semantic matches and your uploaded documents.
+3. **Generate** — the chunks + your question go to a local LLM (Llama 3.1 8B in **Deep** mode; a 3B model in **⚡ Fast** mode) which writes a grounded answer with inline `[n]` citations, or says it doesn't know rather than hallucinating.
 
-1. **Ingest** — `ingest.py` clones the full TM Forum Open API repo set (~88 `TMFxxx` API repos + ODA Canvas + design-guideline/data-model docs), parses each OpenAPI spec into natural-language text, chunks it, embeds it with `nomic-embed-text`, and stores it in ChromaDB.
-2. **Retrieve** — on each question the backend detects which spec(s) you mean — **by number (`TMF641`) or by name (`Product Catalog Management API`)** — and pulls that spec's own chunks directly, so the right spec is always in context. It then fills remaining slots with general semantic matches and any relevant uploaded documents.
-3. **Generate** — the retrieved chunks + your question go to a local LLM (Llama 3.1 8B via Ollama in **Deep mode**; a 3B model powers **⚡ Fast mode**), which writes a grounded answer with inline `[n]` citations. If nothing relevant is found — or the question is off-domain — it says so instead of hallucinating.
-
-Current knowledge base: **~10,800 chunks across 74 TM Forum specs.**
-
----
-
-## What's inside
-
-- **Cited answers** — inline `[n]` citations linking to the exact spec chunk + GitHub source, plus suggested follow-up questions and a live "searching TMF…" trace while it thinks.
-- **Deep / ⚡ Fast modes** — the full 8B for accuracy or a 3B for instant lookups; repeated questions are cached and return instantly.
-- **TMF630 Conformance checker** — upload your own OpenAPI spec and get a scored report of where it deviates from TM Forum design rules.
-- **Add knowledge from the UI** — upload files (PDF, DOCX, XLSX, PPTX, CSV, TXT, MD, JSON, YAML), point at a Git repo, or paste a web link.
-- **Admin** — live branding (logo + colour-wheel theme), users & RBAC, and an adoption dashboard (active users, daily volume, answer rate, knowledge gaps).
-- **Dark mode**, a **⌘K command palette**, and a **VS Code extension** (`vscode-extension/`).
-- **Self-hostable** — one-command Docker deploy (**[DEPLOY.md](DEPLOY.md)**) and an automated eval harness (`backend/eval.py`).
+**The compliance agent:** parses your spec and runs the deterministic engines above — *no model involved*. The canonical TMF specs in `backend/data/` (cloned at ingest time) are the ground truth for profile detection and the X-ray.
 
 ---
 
@@ -41,151 +103,99 @@ Current knowledge base: **~10,800 chunks across 74 TM Forum specs.**
 
 | Requirement | Notes |
 |---|---|
-| [Ollama](https://ollama.com) | Local LLM + embedding runtime |
+| [Ollama](https://ollama.com) | Local LLM + embedding runtime (only needed for **chat**; conformance works without it) |
 | [Node.js](https://nodejs.org) (LTS) | Frontend |
 | Python 3.9+ | Backend |
 | ~8 GB free RAM | For the 8B model (16 GB recommended) |
 | Internet (first run only) | To clone the TM Forum spec repos |
 
-Pull the models once:
 ```bash
 ollama pull llama3.1:8b
 ollama pull nomic-embed-text
-ollama pull llama3.2          # optional — powers ⚡ Fast mode (smaller, much quicker on CPU)
+ollama pull llama3.2          # optional — powers ⚡ Fast mode
 ```
-
-> **On the model:** the product spec references "Llama 3.3 8B", but Llama 3.3 ships only in 70B — the genuine latest-generation 8B is **Llama 3.1 8B**, which is what SynaptDI uses. To use a different model, set the `LLM_MODEL` env var (see [Configuration](#configuration)).
 
 ---
 
 ## Quick start (macOS / Linux)
 
 ```bash
-# 1. Clone
 git clone https://github.com/dibuAI/SynaptDI.git
 cd SynaptDI
 
-# 2. Backend
-cd backend
-python3 -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
-cd ..
+# Backend
+cd backend && python3 -m venv venv && source venv/bin/activate && pip install -r requirements.txt && cd ..
 
-# 3. Frontend
-cd frontend
-npm install
-echo "NEXT_PUBLIC_API_URL=http://localhost:8000" > .env.local
-cd ..
+# Frontend
+cd frontend && npm install && echo "NEXT_PUBLIC_API_URL=http://localhost:8000" > .env.local && cd ..
 
-# 4. Launch everything
+# Launch everything (first run auto-ingests the corpus — ~5–10 min, needs Ollama + internet)
 ./start.sh
 ```
 
-## Quick start (Windows)
+On Windows use `start.bat` and the `venv\Scripts\activate` path (full notes below in the repo). Prefer Unix tooling on Windows? The steps work as-is inside **WSL**.
 
-Same steps, but use the Windows venv path and the `start.bat` launcher. In **Command Prompt** or **PowerShell**:
-
-```bat
-:: 1. Clone
-git clone https://github.com/dibuAI/SynaptDI.git
-cd SynaptDI
-
-:: 2. Backend
-cd backend
-python -m venv venv
-venv\Scripts\activate
-pip install -r requirements.txt
-cd ..
-
-:: 3. Frontend
-cd frontend
-npm install
-cd ..
-
-:: 4. Launch everything (opens backend + frontend in separate windows)
-start.bat
-```
-
-**Windows prerequisites:** install [Git](https://git-scm.com/download/win), [Python 3.10+](https://www.python.org/downloads/windows/) (check **"Add python.exe to PATH"** during install), [Node.js LTS](https://nodejs.org), and [Ollama for Windows](https://ollama.com/download/windows). Then pull the models: `ollama pull llama3.1:8b` and `ollama pull nomic-embed-text`. The frontend defaults to `http://localhost:8000`, so `.env.local` is optional. *(Prefer Unix tooling? The macOS/Linux steps also work as-is inside **WSL**.)*
-
-On the **first** launch, `start.sh` detects there is no index and runs `ingest.py` automatically — it clones the TM Forum repos and builds the vector index (**~5–10 minutes**, requires Ollama running and internet). Subsequent launches start in seconds.
-
-When it's ready:
-- **Chat UI** → http://localhost:3000
-- **API docs** → http://localhost:8000/docs
-- **Health** → http://localhost:8000/health
+When it's ready: **Chat** → http://localhost:3000 · **Conformance & X-ray** → http://localhost:3000/conformance · **API docs** → http://localhost:8000/docs · **Health** → http://localhost:8000/health
 
 ### First login
+Real auth (hashed passwords + sessions). Seeded accounts: `admin@synaptdi.com / admin123` (admin), `analyst@synaptdi.com / analyst123`, `lisa@synaptdi.com / viewer123`. Change these in production (`backend/storage/users.json`, git-ignored).
 
-Authentication is real (hashed passwords + sessions). Seeded demo accounts:
+> The vector index (`backend/chroma_db/`) and cloned specs (`backend/data/`) are generated locally and **not** committed. Rebuild manually: `cd backend && source venv/bin/activate && python3 ingest.py`.
 
-| Email | Password | Role |
-|---|---|---|
-| `admin@synaptdi.com` | `admin123` | admin (can add knowledge, manage users) |
-| `analyst@synaptdi.com` | `analyst123` | analyst |
-| `lisa@synaptdi.com` | `viewer123` | viewer |
+---
 
-Change these in production (passwords are hashed in `backend/storage/users.json`, which is git-ignored).
+## The VS Code extension
 
-### Adding knowledge (no scripts needed)
+The compliance agent, in your editor. Build/install it:
 
-As an **admin/analyst**, go to **Documents** and add sources from the UI:
-- **Upload a file** (PDF, DOCX, XLSX, PPTX, CSV, TXT, MD, JSON, YAML)
-- **Git repo URL** — clones & indexes any GitHub / TM Forum / MEF repo's OpenAPI specs + docs
-- **Web link** — fetches a page or PDF and indexes its text
+```bash
+cd vscode-extension && npm install && npm run compile
+npx @vscode/vsce package --no-dependencies         # produces synaptdi-<version>.vsix
+code --install-extension synaptdi-0.14.1.vsix      # or: Extensions panel → ⋯ → Install from VSIX
+```
 
-Each source indexes in the background and can be deleted (with all its chunks) in one click. In chat, the **Search scope** toggle lets you ask across *Everything*, the *Knowledge Base*, or *My Documents*.
+It talks to the backend at `http://localhost:8000` (configurable via the `synaptdi.apiUrl` setting). What you get:
 
-> The vector index (`backend/chroma_db/`) and cloned specs (`backend/data/`) are **not** committed — they are generated locally by the ingest step. To rebuild the base index manually: `cd backend && source venv/bin/activate && python3 ingest.py`.
+- **Chat that reads your open file** — ask a question and it automatically includes the spec you're editing (a "Reading `orders.yaml`" chip; toggle off anytime), plus a **+ Add file** picker for multi-file context.
+- **Live compliance** — spec files are checked **as you type**; a status-bar badge and a chat pill show **`TMF N/100`**, and squiggles in the editor cite the exact TMF630 rule.
+- **The coverage pill** — a second **`vs TMF641 · 26%`** pill shows how much of the real TMF API you implement; click it for the full gap report.
+- **One-click Auto-fix** and **Apply-as-diff** — fix mechanical issues, or apply a chat's code suggestion as a reviewable diff.
+- **API Estate X-ray** — a dashboard button in the panel header scans your workspace (or open spec tabs) into the portfolio report.
+- **Local chat history + search**, Fast/Deep toggle, per-answer copy/regenerate.
+
+Try it immediately with the bundled samples in `vscode-extension/examples/` (`product-ordering.broken.yaml` for a single spec, `examples/estate/` for the X-ray) — see `examples/DEMO.md` for a 30-second walkthrough.
+
+---
+
+## Command-line tools
+
+All pure-Python, offline, and CI-friendly (`cd backend && source venv/bin/activate`):
+
+| Command | Purpose |
+|---|---|
+| `python validate_conformance.py [--min 90] [--json]` | Run the engine over every official TMF spec; exit 1 if any drops below the gate. Engine self-test / regression guard. |
+| `python xray.py <folder>` | API estate X-ray of a folder — prints the report and writes `synaptdi-xray.md`. |
+| `python synaptdi_check.py <files…> [--min 90]` | Gate your *own* specs in CI — exits non-zero if any scores below `--min`. See `backend/COMPLIANCE.md` for a pre-commit hook + GitHub Actions snippet. |
+| `python test_conformance.py` | The 14-test unit suite (also pytest-compatible). |
 
 ---
 
 ## Configuration
 
-The backend reads these environment variables (all optional, with sensible defaults):
+The backend reads these (all optional). Conformance needs none of them — only chat uses the models.
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `LLM_MODEL` | `llama3.1:8b` | Ollama model for **Deep**-mode answers |
+| `LLM_MODEL` | `llama3.1:8b` | Ollama model for **Deep** answers |
 | `FAST_MODEL` | `llama3.2:latest` | Model for **⚡ Fast** mode |
-| `EMBED_MODEL` | `nomic-embed-text` | Ollama embedding model |
+| `EMBED_MODEL` | `nomic-embed-text` | Embedding model |
 | `OLLAMA_URL` | `http://localhost:11434` | Ollama endpoint |
 | `CHROMA_PATH` | `./chroma_db` | Vector DB location |
-| `LLM_CONCURRENCY` | `1` | Parallel generations (raise only with a GPU) |
-| `WARM_MODELS` | `1` | Pre-load the LLM at startup so the first query isn't cold (`0` to disable) |
-| `OLLAMA_KEEP_ALIVE` | `30m` | How long Ollama keeps the model in RAM between queries (avoids cold reloads) |
-| `NUM_CTX` | `4096` | Prompt + generation context window |
-| `FAST_TOP_K` · `FAST_NUM_PREDICT` | `4` · `500` | Fast mode: fewer chunks + shorter answers |
-| `DEEP_NUM_PREDICT` | `900` | Deep mode: max answer length |
-| `VECTOR_BACKEND` | `chroma` | Vector-store backend (interface allows future Milvus/Qdrant/pgvector) |
+| `WARM_MODELS` | `1` | Pre-load the LLM at startup (`0` to disable) |
+| `NUM_CTX` | `4096` | Context window |
+| `VECTOR_BACKEND` | `chroma` | Vector store (interface allows future Milvus/Qdrant/pgvector) |
 
-The frontend reads `NEXT_PUBLIC_API_URL` (set in `frontend/.env.local`, default `http://localhost:8000`).
-
-Example — run with a smaller/faster model:
-```bash
-LLM_MODEL=llama3.2 uvicorn main:app --port 8000
-```
-
----
-
-## Knowledge base
-
-**Included** (cloned automatically by `ingest.py`): the TM Forum Open API suite (TMF620–TMF937), ODA Canvas docs, reference example components, REST design guidelines and data-model docs — sourced from the public `tmforum-apis` and `tmforum-oda` GitHub organizations.
-
-**Not included:** member-portal PDFs (TMF630 Design Guidelines, eTOM GB921, SID GB922) are not in the free GitHub repos. Common patterns from them (e.g. pagination via `offset`/`limit`) are still answerable because they appear across the specs, but deep framework-concept questions need those PDFs added manually. You can upload additional documents (incl. PDFs) at runtime via the Documents page.
-
----
-
-## Stack
-
-| Layer | Tool |
-|---|---|
-| LLM | Llama 3.1 8B via Ollama |
-| Embeddings | nomic-embed-text via Ollama |
-| Vector DB | ChromaDB (local, cosine) |
-| Backend | FastAPI + Python |
-| Frontend | Next.js + Tailwind CSS |
+Frontend reads `NEXT_PUBLIC_API_URL` (`frontend/.env.local`, default `http://localhost:8000`).
 
 ---
 
@@ -193,33 +203,41 @@ LLM_MODEL=llama3.2 uvicorn main:app --port 8000
 
 ```
 SynaptDI/
-├── start.sh / start.bat    ← Ollama check, ingest (if needed), backend + frontend
-├── docker-compose.yml      ← one-command deploy (see DEPLOY.md)
+├── start.sh / start.bat        ← Ollama check, ingest (if needed), backend + frontend
+├── docker-compose.yml          ← one-command deploy (see DEPLOY.md)
 ├── backend/
-│   ├── main.py             ← FastAPI app + spec-aware RAG query engine
-│   ├── ingest.py           ← clone + parse + embed + index the TM Forum corpus
-│   ├── vectorstore.py      ← backend-agnostic vector store (Chroma today)
-│   ├── conformance.py      ← TMF630 conformance rule engine
-│   ├── eval.py + evals/    ← automated quality harness + golden set
-│   ├── requirements.txt · Dockerfile
-│   ├── chroma_db/          ← vector index   (generated; gitignored)
-│   └── data/               ← cloned spec repos (generated; gitignored)
-├── frontend/
-│   └── app/                ← Next.js: Chat, Documents, Conformance, Admin, Settings
-└── vscode-extension/       ← "Ask SynaptDI" VS Code extension
+│   ├── main.py                 ← FastAPI app: RAG query engine + all /conformance/* endpoints
+│   ├── ingest.py               ← clone + parse + embed + index the TM Forum corpus
+│   ├── conformance.py          ← TMF630 structural rule engine (deterministic)
+│   ├── tmf_profile.py          ← profile-aware conformance (detect API + diff vs canonical)
+│   ├── xray.py                 ← API estate X-ray (portfolio roll-up) + CLI
+│   ├── validate_conformance.py ← validate the engine vs 169 official specs / CI gate
+│   ├── synaptdi_check.py       ← CI gate for your own specs
+│   ├── test_conformance.py     ← 14 unit tests (conformance + fixer + profile + X-ray)
+│   ├── COMPLIANCE.md           ← CLI usage, pre-commit hook, GitHub Actions
+│   ├── vectorstore.py · eval.py · evals/
+│   ├── chroma_db/  data/       ← generated, gitignored
+├── frontend/app/               ← Next.js: Chat · Documents · Conformance & X-ray · Admin · Settings
+└── vscode-extension/           ← "Ask SynaptDI" extension + examples/ (demo specs)
 ```
 
 ---
 
 ## API reference
 
-**`POST /query`** — ask a question
-```json
-{ "question": "What mandatory fields does a Product Order have in TMF622?", "top_k": 8 }
-```
-Response: `{ answer, sources[], latency_ms, chunks_retrieved }`
+**Assistant** — `POST /query` · `POST /query/stream` (token streaming) · `POST /followups` · `GET /coverage` · `GET /health` · `GET /stats` · `GET /analytics` (admin).
 
-Key endpoints: **`POST /query/stream`** (token streaming) · **`POST /conformance`** (TMF630 spec audit) · **`GET /coverage`** (indexed specs by domain) · **`POST /followups`** · **`GET /health`** · **`GET /stats`** · **`GET /analytics`** (admin). Full interactive docs at `http://localhost:8000/docs`.
+**Compliance** (all deterministic, no LLM):
+
+| Endpoint | Does |
+|---|---|
+| `POST /conformance` | TMF630 audit of an uploaded spec file (multipart) |
+| `POST /conformance/text` | TMF630 score **+ profile coverage**, from a JSON body — used by the editor |
+| `POST /conformance/profile` | Detect the TMF API and diff vs the canonical spec |
+| `POST /conformance/fix` | Auto-fix fixable TMF630 violations, return the corrected spec |
+| `POST /conformance/portfolio` | API estate X-ray across many specs (+ rendered markdown) |
+
+Full interactive docs at `http://localhost:8000/docs`.
 
 ---
 
@@ -227,19 +245,32 @@ Key endpoints: **`POST /query/stream`** (token streaming) · **`POST /conformanc
 
 | Symptom | Fix |
 |---|---|
-| `command not found: uvicorn` | Activate the venv (`source backend/venv/bin/activate`) or just use `./start.sh` |
-| `Address already in use` | App is already running — open http://localhost:3000 |
-| `503` / "Embedding failed" | Ollama isn't running: `ollama serve &`, then retry |
-| Answer says "not in the knowledge base" for everything | The index didn't build — run `cd backend && python3 ingest.py` with Ollama running |
-| Answers are slow / "request timed out" | An 8B model on a CPU-only PC is slow — especially the first (cold) query. Use the **⚡ Fast** toggle in chat, warm the model once with `ollama run llama3.1:8b "hi"`, check `ollama ps` (GPU vs CPU), or run on Apple Silicon / a GPU box. The chat no longer hard-times-out — it keeps waiting as long as tokens are streaming. |
-| Frontend loads but can't reach API | Ensure `frontend/.env.local` has `NEXT_PUBLIC_API_URL=http://localhost:8000` |
+| `command not found: uvicorn` | Activate the venv (`source backend/venv/bin/activate`) or use `./start.sh` |
+| `503` / "Embedding failed" | Ollama isn't running: `ollama serve &`, then retry (chat only — conformance is unaffected) |
+| Chat says "not in the knowledge base" for everything | The index didn't build — `cd backend && python3 ingest.py` with Ollama running |
+| Answers slow on a CPU laptop | Use the **⚡ Fast** toggle; see **[PERFORMANCE.md](PERFORMANCE.md)** |
+| VS Code X-ray says "no files to X-ray" | Open the folder (or the spec files) you want to scan, then run it again |
+| Extension shows no score | Ensure the backend is on `:8000` (the `synaptdi.apiUrl` setting) and the file is an OpenAPI/Swagger spec |
 
 ---
 
-*SynaptDI — a local, citation-grounded RAG assistant for TM Forum Open API standards.*
+## Deploy & performance
+- **[DEPLOY.md](DEPLOY.md)** — one-command Docker Compose (backend + frontend + Ollama, one URL for the team).
+- **[PERFORMANCE.md](PERFORMANCE.md)** — speeding up the *same* full-quality answer (flash-attention, Intel IPEX-LLM, a GPU host).
 
-## Deploy for your team
-One command on a shared server — see **[DEPLOY.md](DEPLOY.md)** (Docker Compose: backend + frontend + Ollama, one URL for everyone).
+---
 
-## Performance
-Answers feel slow on a CPU-only laptop? **[PERFORMANCE.md](PERFORMANCE.md)** covers how to speed up the *same* full-quality answer — flash-attention, Intel **IPEX-LLM** (uses the Iris Xe iGPU), and a GPU host (~2–5 s for the whole team).
+## Stack
+
+| Layer | Tool |
+|---|---|
+| LLM / Embeddings | Llama 3.1 8B · nomic-embed-text (via Ollama) |
+| Vector DB | ChromaDB (local, cosine) |
+| Conformance | Pure-Python rules + diff engine (no AI) |
+| Backend | FastAPI + Python |
+| Frontend | Next.js + Tailwind CSS |
+| Editor | VS Code extension (TypeScript) |
+
+---
+
+*SynaptDI — a local, citation-grounded RAG assistant **and** a validated TM Forum compliance agent. Ask it anything about TM Forum; point it at your APIs and it tells you the truth.*
