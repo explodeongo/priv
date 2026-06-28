@@ -13,6 +13,7 @@ import glob
 import json
 import os
 import re
+import threading
 
 from conformance import _iter_ops, _is_collection, _is_notification, _schemas, _schema_props
 
@@ -23,7 +24,8 @@ _CACHE = os.path.join(_DATA, ".profile_index.json")
 _CANON = re.compile(r"-v(\d+\.\d+\.\d+).*\.(swagger\.json|oas\.ya?ml)$", re.I)
 _TMF = re.compile(r"TMF\d{3}", re.I)
 
-_INDEX = None   # in-process cache: primary-resource → canonical metadata
+_INDEX = None              # in-process cache: primary-resource → canonical metadata
+_LOCK = threading.Lock()   # guards the (one-time) index build
 
 
 def _load(path):
@@ -89,15 +91,24 @@ def build_index(force: bool = False) -> dict:
     """primary-resource(lower) → {file, version, tmf, title}. Keeps the highest version
     per resource. Cached in-process and on disk (data/.profile_index.json)."""
     global _INDEX
-    if _INDEX is not None and not force:
-        return _INDEX
-    if not force and os.path.exists(_CACHE):
-        try:
-            _INDEX = json.load(open(_CACHE))
+    with _LOCK:
+        if _INDEX is not None and not force:
             return _INDEX
+        if not force and os.path.exists(_CACHE):
+            try:
+                _INDEX = json.load(open(_CACHE))
+                return _INDEX
+            except Exception:
+                pass
+        _INDEX = _scan_corpus()
+        try:
+            json.dump(_INDEX, open(_CACHE, "w"))
         except Exception:
             pass
+        return _INDEX
 
+
+def _scan_corpus() -> dict:
     idx: dict = {}
     for f in glob.glob(os.path.join(_DATA, "**", "*"), recursive=True):
         base = os.path.basename(f)
@@ -122,19 +133,39 @@ def build_index(force: bool = False) -> dict:
         cur = idx.get(key)
         if not cur or _version_key(meta["version"]) > _version_key(cur["version"]):
             idx[key] = meta
-
-    _INDEX = idx
-    try:
-        json.dump(idx, open(_CACHE, "w"))
-    except Exception:
-        pass
     return idx
+
+
+def warm_index():
+    """Build the index in the background so the first real request never stalls."""
+    if _INDEX is not None:
+        return
+    threading.Thread(target=build_index, daemon=True).start()
+
+
+def _index_nonblocking():
+    """Return the index if it's ready (memory or disk cache) WITHOUT a full corpus
+    scan; otherwise kick a background build and return None."""
+    global _INDEX
+    if _INDEX is not None:
+        return _INDEX
+    if os.path.exists(_CACHE):
+        try:
+            with _LOCK:
+                if _INDEX is None:
+                    _INDEX = json.load(open(_CACHE))
+            return _INDEX
+        except Exception:
+            pass
+    warm_index()
+    return None
 
 
 def clear_index():
     """Drop the cache (call after the knowledge base is re-ingested)."""
     global _INDEX
-    _INDEX = None
+    with _LOCK:
+        _INDEX = None
     try:
         os.remove(_CACHE)
     except Exception:
@@ -146,20 +177,22 @@ def compare_to_canonical(spec: dict) -> dict:
     when the spec doesn't map to a known TMF API."""
     if not isinstance(spec, dict):
         return {"detected": None}
-    idx = build_index()
+    idx = _index_nonblocking()
+    if idx is None:
+        return {"detected": None, "indexing": True}   # first-ever build still warming up
     resources = _collection_resources(spec)
     primary = resources[0] if resources else None
     if not primary:
         return {"detected": None}
 
     meta = idx.get(primary.lower())
-    confidence = "high"
+    matched_by = "resource" if meta else None
     if not meta:
         # Fall back to an explicit TMF number in the title.
         tok = _TMF.search((spec.get("info", {}) or {}).get("title", ""))
         if tok:
             meta = next((m for m in idx.values() if m["tmf"] == tok.group(0).upper()), None)
-            confidence = "medium"
+            matched_by = "title" if meta else None
     if not meta:
         return {"detected": None}
 
@@ -183,6 +216,17 @@ def compare_to_canonical(spec: dict) -> dict:
     op_cov = (ops_present / ops_total) if ops_total else 1.0
     at_cov = (attrs_present / attrs_total) if attrs_total else 1.0
     coverage = round(100 * (0.5 * op_cov + 0.5 * at_cov))
+
+    # Honest confidence — guards against a coincidental resource-name clash on a
+    # non-TMF API. "high" only when the resource matches AND the user's spec really
+    # shares structure with the canonical (so the UI never mislabels a random file).
+    overlap = ops_present + attrs_present
+    if matched_by == "resource" and attrs_present >= 1 and overlap >= 3:
+        confidence = "high"
+    elif overlap >= 2:
+        confidence = "medium"
+    else:
+        confidence = "low"
 
     return {
         "detected": {
