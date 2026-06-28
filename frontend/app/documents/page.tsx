@@ -227,6 +227,7 @@ function ManagementTab({ user }: { user: { role: string } | null }) {
 
   // ── Delete ─────────────────────────────────────────────────────────────────
   const deleteDoc = async (doc: Doc) => {
+    if (!confirm(`Delete "${doc.name}"? This removes the document and all its chunks from the knowledge base.`)) return;
     setDocs(prev => prev.filter(d => d.file !== doc.file));
     try {
       const r = await fetch(`${API}/documents/${encodeURIComponent(doc.file)}`, { method: "DELETE" });
@@ -509,11 +510,12 @@ function ManagementTab({ user }: { user: { role: string } | null }) {
             ))}
           </div>
         ) : (
-          <table className="w-full">
+          <div className="overflow-x-auto">
+          <table className="w-full min-w-[720px]">
             <thead>
               <tr className="bg-gray-50 dark:bg-slate-800 border-b border-gray-100 dark:border-slate-800">
                 {["Document","Status","Chunks",""].map((h, i) => (
-                  <th key={i} className={`text-[11px] font-bold text-gray-400 uppercase tracking-widest px-5 py-2.5 ${i === 0 ? "text-left" : "text-center"}`}>{h}</th>
+                  <th key={i} className={`text-[11px] font-bold text-gray-400 uppercase tracking-widest px-5 py-2.5 ${i === 0 ? "text-left" : "text-center"} ${i === 3 ? "sticky right-0 z-10 bg-gray-50 dark:bg-slate-800" : ""}`}>{h}</th>
                 ))}
               </tr>
             </thead>
@@ -611,7 +613,7 @@ function ManagementTab({ user }: { user: { role: string } | null }) {
                       {doc.chunks > 0 ? doc.chunks.toLocaleString() : "—"}
                     </span>
                   </td>
-                  <td className="px-5 py-2.5">
+                  <td className="px-5 py-2.5 sticky right-0 z-10 bg-white dark:bg-slate-900 shadow-[-10px_0_10px_-8px_rgba(0,0,0,0.08)]">
                     <div className="flex items-center justify-end gap-1.5">
                       {canUpload && (
                         <select value={doc.folder || ""} onChange={e => moveDoc(doc, e.target.value)}
@@ -621,7 +623,7 @@ function ManagementTab({ user }: { user: { role: string } | null }) {
                           {folders.map(f => <option key={f.name} value={f.name}>{f.name}</option>)}
                         </select>
                       )}
-                      <span className="flex items-center gap-1.5 opacity-60 group-hover:opacity-100 transition-opacity">
+                      <span className="flex items-center gap-1.5">
                       {(doc.type !== "repo" && doc.type !== "web") && doc.status !== "processing" && (
                         <button onClick={() => setPreview({ file: doc.file, name: doc.name, scope: "docs" })} title="Preview / read"
                           className="p-1.5 rounded-lg text-gray-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-500/10 transition-colors">
@@ -664,6 +666,7 @@ function ManagementTab({ user }: { user: { role: string } | null }) {
               ))}
             </tbody>
           </table>
+          </div>
         )}
         {!loadingList && visible.length === 0 && (
           <div className="text-center py-16">
