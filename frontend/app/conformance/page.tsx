@@ -1,5 +1,5 @@
 "use client";
-import { useState, useRef } from "react";
+import { useState, useRef, Fragment } from "react";
 import AppShell from "../components/AppShell";
 import { useToast } from "../components/Toast";
 
@@ -24,7 +24,9 @@ interface Report {
 }
 interface Row {
   file: string; api: string; structural: number; errors: number; warnings: number; fixable: number;
-  profile: null | { tmf: string; version: string; coverage: number; missing_ops: number; missing_fields: number; top_fields: string[] };
+  failing?: string[];
+  profile: null | { tmf: string; version: string; coverage: number; missing_ops: number; missing_fields: number;
+    top_fields: string[]; resource?: string; operations?: string[]; fields?: string[] };
 }
 interface Portfolio {
   generated: string;
@@ -50,6 +52,7 @@ export default function ConformancePage() {
   const [mode, setMode] = useState<"single" | "portfolio">("single");
   const [report, setReport] = useState<Report | null>(null);
   const [portfolio, setPortfolio] = useState<Portfolio | null>(null);
+  const [openRows, setOpenRows] = useState<Set<number>>(new Set());
   const [specText, setSpecText] = useState("");
   const [loading, setLoading] = useState(false);
   const [fixing, setFixing] = useState(false);
@@ -360,24 +363,71 @@ export default function ConformancePage() {
                         <th className="text-left font-medium px-3 py-2.5">Structure</th>
                         <th className="text-left font-medium px-3 py-2.5">TMF profile</th>
                         <th className="text-left font-medium px-3 py-2.5">Coverage</th>
-                        <th className="text-left font-medium px-4 py-2.5 hidden sm:table-cell">Top gaps</th>
+                        <th className="text-left font-medium px-4 py-2.5 hidden sm:table-cell">Gaps (click a row)</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {portfolio.rows.map((r, i) => (
-                        <tr key={i} className="border-t border-gray-100 dark:border-slate-800">
-                          <td className="px-4 py-2.5">
-                            <div className="font-medium text-gray-900 dark:text-slate-100 truncate max-w-[180px]">{r.api}</div>
-                            <div className="text-[11px] text-gray-400 dark:text-slate-500 truncate max-w-[180px]">{r.file}</div>
-                          </td>
-                          <td className="px-3 py-2.5"><span className="font-semibold" style={{ color: tone(r.structural).ring }}>{r.structural}</span><span className="text-gray-400 text-xs">/100</span></td>
-                          <td className="px-3 py-2.5 text-xs text-gray-600 dark:text-slate-300">{r.profile ? `${r.profile.tmf} v${r.profile.version}` : "—"}</td>
-                          <td className="px-3 py-2.5">{r.profile ? <span className="font-semibold" style={{ color: covColor(r.profile.coverage) }}>{r.profile.coverage}%</span> : <span className="text-gray-400">—</span>}</td>
-                          <td className="px-4 py-2.5 text-[11px] text-gray-500 dark:text-slate-400 hidden sm:table-cell">
-                            {r.profile ? `${r.profile.missing_ops} ops, ${r.profile.missing_fields} fields${r.profile.top_fields.length ? ` (${r.profile.top_fields.slice(0, 3).join(", ")}…)` : ""}` : "—"}
-                          </td>
-                        </tr>
-                      ))}
+                      {portfolio.rows.map((r, i) => {
+                        const p = r.profile;
+                        const isOpen = openRows.has(i);
+                        const gaps = p ? p.missing_ops + p.missing_fields : 0;
+                        return (
+                          <Fragment key={i}>
+                            <tr onClick={() => setOpenRows(s => { const n = new Set(s); n.has(i) ? n.delete(i) : n.add(i); return n; })}
+                              className="border-t border-gray-100 dark:border-slate-800 cursor-pointer hover:bg-gray-50 dark:hover:bg-slate-800/40">
+                              <td className="px-4 py-2.5">
+                                <div className="flex items-center gap-1.5">
+                                  <svg className={`w-3 h-3 flex-shrink-0 text-gray-400 transition-transform ${isOpen ? "rotate-90" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" /></svg>
+                                  <div className="min-w-0">
+                                    <div className="font-medium text-gray-900 dark:text-slate-100 truncate max-w-[170px]">{r.api}</div>
+                                    <div className="text-[11px] text-gray-400 dark:text-slate-500 truncate max-w-[170px]">{r.file}</div>
+                                  </div>
+                                </div>
+                              </td>
+                              <td className="px-3 py-2.5"><span className="font-semibold" style={{ color: tone(r.structural).ring }}>{r.structural}</span><span className="text-gray-400 text-xs">/100</span></td>
+                              <td className="px-3 py-2.5 text-xs text-gray-600 dark:text-slate-300">{p ? `${p.tmf} v${p.version}` : "—"}</td>
+                              <td className="px-3 py-2.5">{p ? <span className="font-semibold" style={{ color: covColor(p.coverage) }}>{p.coverage}%</span> : <span className="text-gray-400">—</span>}</td>
+                              <td className="px-4 py-2.5 text-[11px] text-gray-500 dark:text-slate-400 hidden sm:table-cell">
+                                {p ? `${p.missing_ops} ops · ${p.missing_fields} fields` : "—"}
+                                {gaps > 0 && <span className="text-red-600 dark:text-red-400 font-medium"> · {isOpen ? "hide" : "view all"}</span>}
+                              </td>
+                            </tr>
+                            {isOpen && (
+                              <tr className="bg-gray-50/70 dark:bg-slate-800/30">
+                                <td colSpan={5} className="px-4 pb-4 pt-1">
+                                  {!p ? (
+                                    <div className="text-xs text-gray-500 dark:text-slate-400">No TMF profile matched for this spec — generic TMF630 checks only.</div>
+                                  ) : (
+                                    <div className="space-y-3">
+                                      {r.failing && r.failing.length > 0 && (
+                                        <div>
+                                          <div className="text-[11px] font-semibold uppercase tracking-wide text-gray-400 mb-1">Structure issues ({r.failing.length})</div>
+                                          <div className="flex flex-wrap gap-1.5">{r.failing.map((f, k) => <span key={k} className="text-[11px] bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-500/30 rounded px-1.5 py-0.5">{f}</span>)}</div>
+                                        </div>
+                                      )}
+                                      {p.operations && p.operations.length > 0 && (
+                                        <div>
+                                          <div className="text-[11px] font-semibold uppercase tracking-wide text-gray-400 mb-1">Missing operations ({p.operations.length})</div>
+                                          <div className="flex flex-wrap gap-1.5">{p.operations.map((o, k) => <code key={k} className="text-[11px] font-mono bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 text-gray-700 dark:text-slate-300 rounded px-1.5 py-0.5">{o}</code>)}</div>
+                                        </div>
+                                      )}
+                                      {p.fields && p.fields.length > 0 && (
+                                        <div>
+                                          <div className="text-[11px] font-semibold uppercase tracking-wide text-gray-400 mb-1">Missing {p.resource || "resource"} attributes ({p.fields.length})</div>
+                                          <div className="flex flex-wrap gap-1.5">{p.fields.map((f, k) => <code key={k} className="text-[11px] font-mono bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 text-gray-700 dark:text-slate-300 rounded px-1.5 py-0.5">{f}</code>)}</div>
+                                        </div>
+                                      )}
+                                      <div className="text-[11px] text-gray-500 dark:text-slate-400">
+                                        <span className="font-semibold">Remediation:</span> {r.fixable ? `run Auto-fix (${r.fixable} mechanical fix${r.fixable === 1 ? "" : "es"})` : ""}{r.fixable && gaps ? "; " : ""}{gaps ? `scaffold the ${gaps} missing operations/fields from ${p.tmf}` : ""}{!r.fixable && !gaps ? "already aligned — no action needed." : "."}
+                                      </div>
+                                    </div>
+                                  )}
+                                </td>
+                              </tr>
+                            )}
+                          </Fragment>
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>
