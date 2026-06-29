@@ -15,7 +15,7 @@ import os
 import re
 import threading
 
-from conformance import _iter_ops, _is_collection, _is_notification, _schemas, _schema_props
+from conformance import _iter_ops, _is_collection, _is_notification, _resolve_ref, _schemas, _schema_props
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _DATA = os.path.join(_HERE, "data")
@@ -248,4 +248,175 @@ def compare_to_canonical(spec: dict) -> dict:
             "canonical_attrs": attrs_total,
             "missing": missing_fields,
         },
+    }
+
+
+# ── Scaffold: complete a partial spec from the canonical one (deterministic) ──────
+def _schema_prop_defs(spec: dict, schema, _depth: int = 0) -> dict:
+    """{name: definition} for a schema, resolving $ref + allOf composition."""
+    if not isinstance(schema, dict) or _depth > 8:
+        return {}
+    if "$ref" in schema:
+        return _schema_prop_defs(spec, _resolve_ref(spec, schema["$ref"]), _depth + 1)
+    out = dict(schema.get("properties") or {})
+    for sub in (schema.get("allOf") or []) + (schema.get("oneOf") or []) + (schema.get("anyOf") or []):
+        for k, v in _schema_prop_defs(spec, sub, _depth + 1).items():
+            out.setdefault(k, v)
+    return out
+
+
+_KIND_BY_SEG = {"definitions": "schemas", "schemas": "schemas", "parameters": "parameters", "responses": "responses"}
+
+
+def _parse_ref(ref):
+    """Internal $ref → (kind, name), version-agnostic. None for external refs."""
+    if not isinstance(ref, str) or not ref.startswith("#/"):
+        return None
+    parts = ref.lstrip("#/").split("/")
+    if len(parts) < 2:
+        return None
+    for seg in parts[:-1]:
+        if seg in _KIND_BY_SEG:
+            return _KIND_BY_SEG[seg], parts[-1]
+    return None
+
+
+def _container(spec: dict, kind: str, create: bool = False):
+    """The dict holding components of `kind` in the spec's OWN convention (Swagger-2
+    definitions/parameters/responses vs OpenAPI-3 components/*), plus its $ref prefix."""
+    if spec.get("swagger") and kind in ("schemas", "parameters", "responses"):
+        path = ["definitions"] if kind == "schemas" else [kind]
+    else:
+        path = ["components", kind]
+    d = spec
+    for p in path:
+        if p not in d:
+            if not create:
+                return None, "#/" + "/".join(path) + "/"
+            d[p] = {}
+        d = d[p]
+    return (d if isinstance(d, dict) else None), "#/" + "/".join(path) + "/"
+
+
+def _ensure(cspec: dict, uspec: dict, ref, seen: set, rmap: dict):
+    """Copy a referenced component canonical → user, normalised into the user's
+    convention, recording a ref-rewrite so nothing is left dangling or mixed."""
+    import copy as _copy
+    if ref in seen:
+        return
+    seen.add(ref)
+    parsed = _parse_ref(ref)
+    if not parsed:
+        return
+    kind, name = parsed
+    csrc, _ = _container(cspec, kind, create=False)
+    src = csrc.get(name) if isinstance(csrc, dict) else None
+    if src is None:
+        return
+    udst, upfx = _container(uspec, kind, create=True)
+    rmap[ref] = upfx + name
+    if isinstance(udst, dict) and name not in udst:
+        udst[name] = _copy.deepcopy(src)
+        _walk(cspec, uspec, src, seen, rmap)
+
+
+def _walk(cspec: dict, uspec: dict, node, seen: set, rmap: dict):
+    if isinstance(node, dict):
+        if isinstance(node.get("$ref"), str):
+            _ensure(cspec, uspec, node["$ref"], seen, rmap)
+        for v in node.values():
+            _walk(cspec, uspec, v, seen, rmap)
+    elif isinstance(node, list):
+        for v in node:
+            _walk(cspec, uspec, v, seen, rmap)
+
+
+def _apply_rewrites(node, rmap: dict):
+    if isinstance(node, dict):
+        r = node.get("$ref")
+        if isinstance(r, str) and r in rmap:
+            node["$ref"] = rmap[r]
+        for v in node.values():
+            _apply_rewrites(v, rmap)
+    elif isinstance(node, list):
+        for v in node:
+            _apply_rewrites(v, rmap)
+
+
+def scaffold_from_canonical(spec: dict) -> dict:
+    """Deterministically merge the MISSING operations + primary-resource attributes
+    (and their referenced schemas) from the detected canonical TMF spec into a copy of
+    the user's spec — auto-completing a partial API toward 100% coverage. No LLM."""
+    import copy as _copy
+    cmp = compare_to_canonical(spec)
+    det = cmp.get("detected")
+    empty = {"detected": None, "added": {"operations": [], "fields": [], "components": 0}}
+    if not det:
+        return empty
+    idx = _index_nonblocking() or {}
+    primary = (_collection_resources(spec) or [None])[0]
+    meta = idx.get((primary or "").lower())
+    if not meta:
+        tok = _TMF.search((spec.get("info", {}) or {}).get("title", ""))
+        meta = next((m for m in idx.values() if tok and m["tmf"] == tok.group(0).upper()), None)
+    if not meta:
+        return empty
+    cspec = _load(os.path.join(_HERE, meta["file"]))
+    if not isinstance(cspec, dict):
+        return empty
+
+    out = _copy.deepcopy(spec)
+    seen: set = set()
+    rmap: dict = {}
+    uschemas, _ = _container(out, "schemas", create=True)
+    n_before = len(uschemas or {})
+
+    # 1) Missing operations — copy the canonical path-item operations + their deps.
+    user_ops = _ops(out)
+    out_paths = out.setdefault("paths", {})
+    added_ops = []
+    for cpath, citem in (cspec.get("paths") or {}).items():
+        if not isinstance(citem, dict) or _is_notification(cpath):
+            continue
+        for method, cop in citem.items():
+            if method.lower() not in ("get", "post", "put", "patch", "delete") or not isinstance(cop, dict):
+                continue
+            if (method.lower(), _norm(cpath)) in user_ops:
+                continue
+            uitem = out_paths.setdefault(cpath, {})
+            if method not in uitem:
+                uitem[method] = _copy.deepcopy(cop)
+                added_ops.append(method.upper() + " " + cpath)
+                _walk(cspec, out, cop, seen, rmap)
+                if isinstance(citem.get("parameters"), list) and "parameters" not in uitem:
+                    uitem["parameters"] = _copy.deepcopy(citem["parameters"])
+                    _walk(cspec, out, citem["parameters"], seen, rmap)
+
+    # 2) Missing attributes on the primary resource — copy their definitions + deps.
+    added_fields = []
+    if primary:
+        _, us = _primary_schema(out, primary)
+        _, cs = _primary_schema(cspec, primary)
+        if isinstance(us, dict) and isinstance(cs, dict):
+            have = _schema_props(out, us)
+            target = us.setdefault("properties", {})
+            for name, pdef in _schema_prop_defs(cspec, cs).items():
+                if name.startswith("@") or name in have or name in target:
+                    continue
+                target[name] = _copy.deepcopy(pdef)
+                added_fields.append(name)
+                _walk(cspec, out, pdef, seen, rmap)
+
+    _apply_rewrites(out, rmap)   # normalise every copied $ref into the user's convention
+
+    return {
+        "detected": det,
+        "spec": out,
+        "added": {
+            "operations": added_ops,
+            "fields": added_fields,
+            "components": max(0, len(uschemas or {}) - n_before),
+        },
+        "coverage_before": cmp.get("coverage", 0),
+        "coverage_after": compare_to_canonical(out).get("coverage", cmp.get("coverage", 0)),
     }

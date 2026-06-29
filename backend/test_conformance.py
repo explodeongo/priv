@@ -166,6 +166,43 @@ def test_xray_portfolio_rollup():
     assert "API estate X-ray" in md and "TMF641" in md
 
 
+def test_scaffold_raises_coverage_and_is_clean():
+    user = {"openapi": "3.0.3", "info": {"title": "ACME Service Order API", "version": "1.0"},
+            "paths": {"/serviceOrder": {"get": {"responses": {"200": {}}}, "post": {"responses": {"201": {}}}}},
+            "components": {"schemas": {"ServiceOrder": {"type": "object", "properties": {"id": {"type": "string"}}}}}}
+    r = tmf_profile.scaffold_from_canonical(user)
+    assert r["detected"]["tmf"] == "TMF641", r["detected"]
+    assert r["coverage_after"] > r["coverage_before"], (r["coverage_before"], r["coverage_after"])
+    assert len(r["added"]["operations"]) > 0 and len(r["added"]["fields"]) > 0, r["added"]
+    out = r["spec"]
+    assert "definitions" not in out                      # normalised to the user's OAS3 convention
+    refs = []
+
+    def _walk(n):
+        if isinstance(n, dict):
+            if isinstance(n.get("$ref"), str):
+                refs.append(n["$ref"])
+            for v in n.values():
+                _walk(v)
+        elif isinstance(n, list):
+            for v in n:
+                _walk(v)
+
+    def _resolves(rf):
+        if not rf.startswith("#/"):
+            return True
+        node = out
+        for p in rf.lstrip("#/").split("/"):
+            node = node.get(p) if isinstance(node, dict) else None
+            if node is None:
+                return False
+        return True
+
+    _walk(out)
+    assert all(_resolves(x) for x in refs), [x for x in refs if not _resolves(x)]   # no dangling refs
+    conformance.check_spec(out)                          # merged spec still scores without crashing
+
+
 if __name__ == "__main__":
     import sys
     tests = [(n, f) for n, f in sorted(globals().items()) if n.startswith("test_") and callable(f)]

@@ -83,7 +83,7 @@ export function activate(context: vscode.ExtensionContext) {
       provideTextDocumentContent: (uri) => proposed.get(uri.toString()) || "",
     })
   );
-  const applyCode = async (code: string) => {
+  const applyCode = async (code: string, forceWhole = false) => {
     if (!code.trim()) return;
     const ed = vscode.window.activeTextEditor
       || vscode.window.visibleTextEditors.find((e) => e.document.uri.scheme === "file")
@@ -91,7 +91,7 @@ export function activate(context: vscode.ExtensionContext) {
     if (!ed) { vscode.window.showWarningMessage("SynaptDI: open the file you want to apply this code to first."); return; }
     const doc = ed.document;
     const sel = ed.selection;
-    const whole = !sel || sel.isEmpty;
+    const whole = forceWhole || !sel || sel.isEmpty;
     const range = whole ? new vscode.Range(doc.positionAt(0), doc.positionAt(doc.getText().length)) : new vscode.Range(sel.start, sel.end);
     const text = doc.getText();
     const next = text.slice(0, doc.offsetAt(range.start)) + code + text.slice(doc.offsetAt(range.end));
@@ -109,7 +109,7 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.window.showInformationMessage("SynaptDI: applied changes to " + name + ".");
   };
   context.subscriptions.push(
-    vscode.commands.registerCommand("synaptdi._applyCode", (code: string) => applyCode(code)),
+    vscode.commands.registerCommand("synaptdi._applyCode", (code: string, whole?: boolean) => applyCode(code, !!whole)),
     vscode.commands.registerCommand("synaptdi._pickFiles", async () => {
       const picks = await vscode.window.showOpenDialog({
         canSelectMany: true, canSelectFolders: false, openLabel: "Add to chat context",
@@ -154,6 +154,26 @@ export function activate(context: vscode.ExtensionContext) {
         ch.appendLine("Resource '" + p.resource.name + "':  " + p.resource.user_attrs + " of " + p.resource.canonical_attrs + " attributes present");
         if (p.resource.missing.length) ch.appendLine("Missing attributes (" + p.resource.missing.length + "):  " + p.resource.missing.join(", "));
         ch.show(true);
+      } catch { vscode.window.showWarningMessage("SynaptDI: couldn't reach the backend at " + cfg().apiUrl + "."); }
+    })
+  );
+
+  // ── Scaffold the gaps: complete a partial spec from the canonical TMF spec ──
+  context.subscriptions.push(
+    vscode.commands.registerCommand("synaptdi.scaffold", async () => {
+      const ed = vscode.window.activeTextEditor;
+      if (!ed || !isSpecDoc(ed.document)) { vscode.window.showWarningMessage("SynaptDI: open a TMF OpenAPI spec first."); return; }
+      try {
+        const res = await postJson(cfg().apiUrl + "/conformance/scaffold", { content: ed.document.getText() });
+        if (!res.ok) { vscode.window.showWarningMessage("SynaptDI: scaffold failed (" + res.status + ")."); return; }
+        const r = res.json;
+        if (!r || !r.detected || !r.content) { vscode.window.showInformationMessage("SynaptDI: this spec doesn't match a known TMF API, so there's nothing to scaffold."); return; }
+        const a = r.added || {};
+        if (!(a.operations || []).length && !(a.fields || []).length) { vscode.window.showInformationMessage("SynaptDI: already complete against " + r.detected.tmf + " — nothing to add."); return; }
+        await vscode.commands.executeCommand("synaptdi._applyCode", r.content, true);   // whole-doc reviewable diff
+        vscode.window.showInformationMessage(
+          "SynaptDI scaffolded from " + r.detected.tmf + ": +" + (a.operations || []).length + " operations, +"
+          + (a.fields || []).length + " fields — coverage " + r.coverage_before + "% → " + r.coverage_after + "%. Review the diff and Apply.");
       } catch { vscode.window.showWarningMessage("SynaptDI: couldn't reach the backend at " + cfg().apiUrl + "."); }
     })
   );

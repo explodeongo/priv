@@ -110,6 +110,32 @@ def _log_query(question: str, answered: bool, user: str = ""):
 # ── In-memory state ────────────────────────────────────────────────────────────
 PROCESSING_STATUS: dict[str, dict] = {}   # file → {status, chunks, error?}
 QUERY_HITS:        dict[str, int]  = {}   # source → hit count (resets on restart)
+
+# Persisted, dated per-document performance: {date: {doc: {hits, rel_sum}}}.
+DOC_PERF_FILE = STORAGE_DIR / "doc_perf.json"
+_doc_perf_lock = threading.Lock()
+
+def _record_doc_hits(hits: list):
+    """hits: [(doc_name, distance|None)] retrieved for one query. Persists a real,
+    dated hit count + summed relevance (1 - cosine distance) per document, so the
+    Document Performance tab shows genuine per-period data instead of estimates."""
+    if not hits:
+        return
+    try:
+        with _doc_perf_lock:
+            data = json.loads(DOC_PERF_FILE.read_text()) if DOC_PERF_FILE.exists() else {}
+            day = time.strftime("%Y-%m-%d")
+            bucket = data.get(day, {})
+            for name, dist in hits:
+                rel = max(0.0, min(1.0, 1.0 - float(dist))) if isinstance(dist, (int, float)) else 0.0
+                e = bucket.get(name) or {"hits": 0, "rel_sum": 0.0}
+                e["hits"] += 1
+                e["rel_sum"] += rel
+                bucket[name] = e
+            data[day] = bucket
+            DOC_PERF_FILE.write_text(json.dumps({k: data[k] for k in sorted(data)[-90:]}))
+    except Exception:
+        pass
 _llm_sem = threading.BoundedSemaphore(max(1, LLM_CONCURRENCY))
 
 # ── Answer cache ───────────────────────────────────────────────────────────────
@@ -1125,9 +1151,11 @@ def build_sources(chunks: list) -> list:
         if src not in first:
             first[src] = c
     sources = []
+    rec = []
     for src in order:
         c = first[src]
         QUERY_HITS[src] = QUERY_HITS.get(src, 0) + 1
+        rec.append((src, c.get("distance")))
         meta  = c["metadata"]
         otype = meta.get("origin_type", "")          # "file"/"repo"/"web" for user sources, "" for bundled KB
         sources.append({
@@ -1140,6 +1168,7 @@ def build_sources(chunks: list) -> list:
             "origin_type": otype,
             "domain":  "" if otype else _kb_category(meta.get("spec_id", ""), meta.get("file", ""), ""),
         })
+    _record_doc_hits(rec)
     return sources
 
 def stream_ollama(prompt: str, model: str = "", num_predict: int = DEEP_NUM_PREDICT):
@@ -1452,6 +1481,37 @@ def conformance_fix(req: ConformanceFixReq):
         out = json.dumps(spec, indent=2, ensure_ascii=False)
     return {"content": out, "fixed": fixed, "format": fmt,
             "score": report["score"], "summary": report["summary"]}
+
+@app.post("/conformance/scaffold")
+def conformance_scaffold(req: ConformanceFixReq):
+    """Complete a partial spec by merging the MISSING operations + resource attributes
+    (and their schemas) from the detected canonical TMF spec — deterministic, no LLM.
+    Returns the merged spec in its original format + what was added + coverage delta."""
+    content = req.content or ""
+    if len(content) > 2_000_000:
+        raise HTTPException(413, "Spec too large to scaffold (over 2 MB).")
+    fmt, spec = "json", None
+    try:
+        spec = json.loads(content)
+    except Exception:
+        try:
+            import yaml
+            spec = yaml.safe_load(content); fmt = "yaml"
+        except Exception:
+            spec = None
+    if not isinstance(spec, dict):
+        raise HTTPException(400, "Could not parse as an OpenAPI/Swagger spec (JSON or YAML).")
+    res = tmf_profile.scaffold_from_canonical(spec)
+    if not res.get("detected") or not res.get("spec"):
+        return {"detected": None, "added": {"operations": [], "fields": [], "components": 0}}
+    merged = res["spec"]
+    if fmt == "yaml":
+        import yaml
+        out = yaml.safe_dump(merged, sort_keys=False, default_flow_style=False, allow_unicode=True, width=100)
+    else:
+        out = json.dumps(merged, indent=2, ensure_ascii=False)
+    return {"content": out, "format": fmt, "detected": res["detected"], "added": res["added"],
+            "coverage_before": res["coverage_before"], "coverage_after": res["coverage_after"]}
 
 # ── Documents ──────────────────────────────────────────────────────────────────
 @app.get("/documents/library")
@@ -2106,6 +2166,30 @@ def delete_user(user_id: str, _admin: dict = Depends(require_admin)):
 @app.get("/stats/queries")
 def query_stats():
     return {"hits": QUERY_HITS}
+
+@app.get("/stats/documents")
+def stats_documents(period: str = "30d"):
+    """Per-document query volume + average retrieval relevance over a real time window
+    (7d/30d/90d), from the persisted dated store. Powers the Document Performance tab."""
+    n = {"7d": 7, "30d": 30, "90d": 90}.get(period, 30)
+    cutoff = set(time.strftime("%Y-%m-%d", time.localtime(time.time() - i * 86400)) for i in range(n))
+    try:
+        data = json.loads(DOC_PERF_FILE.read_text()) if DOC_PERF_FILE.exists() else {}
+    except Exception:
+        data = {}
+    agg: dict = {}
+    for day, bucket in data.items():
+        if day not in cutoff:
+            continue
+        for name, e in bucket.items():
+            a = agg.get(name) or {"queries": 0, "rel_sum": 0.0}
+            a["queries"] += e.get("hits", 0)
+            a["rel_sum"] += e.get("rel_sum", 0.0)
+            agg[name] = a
+    docs = {name: {"queries": a["queries"],
+                   "relevance": round(a["rel_sum"] / a["queries"], 3) if a["queries"] else 0.0}
+            for name, a in agg.items()}
+    return {"period": period, "documents": docs}
 
 # ── Feedback + analytics + KB refresh ────────────────────────────────────────
 @app.post("/feedback")
