@@ -53,14 +53,19 @@ def analyze_one(filename: str, content: str):
         "errors": rep["summary"]["failed"],
         "warnings": rep["summary"]["warnings"],
         "fixable": rep.get("fixable", 0),
+        "failing": [f["title"] for f in rep.get("findings", [])
+                    if f["status"] == "fail" and f["severity"] in ("error", "warning")],
         "profile": ({
             "tmf": det["tmf"],
             "version": det["version"],
             "confidence": det["confidence"],
             "coverage": prof["coverage"],
+            "resource": prof["resource"]["name"],
             "missing_ops": len(prof["operations"]["missing"]),
             "missing_fields": len(prof["resource"]["missing"]),
             "top_fields": prof["resource"]["missing"][:6],
+            "operations": [o["method"] + " " + o["path"] for o in prof["operations"]["missing"]],
+            "fields": prof["resource"]["missing"],
         } if det else None),
     }
 
@@ -87,39 +92,80 @@ def build_portfolio(items) -> dict:
     return {"generated": time.strftime("%Y-%m-%d %H:%M"), "summary": summary, "rows": rows}
 
 
+def _verdict(row: dict) -> str:
+    p = row.get("profile")
+    if not p:
+        return "Unprofiled"
+    if p["coverage"] >= 80 and row["structural"] >= 90:
+        return "Ready"
+    if p["coverage"] >= 40 or row["structural"] >= 70:
+        return "Needs work"
+    return "Major gaps"
+
+
+def _scaffoldable(row: dict) -> int:
+    p = row.get("profile")
+    return (p["missing_ops"] + p["missing_fields"]) if p else 0
+
+
 def render_markdown(report: dict) -> str:
     s = report["summary"]
-    out = [
-        "# SynaptDI — API estate X-ray",
-        "",
-        "_Generated %s · deterministic TM Forum analysis, no AI._" % report["generated"],
-        "",
-        "**%d APIs analysed** · %d matched a TMF profile · avg structure %d/100 · avg TMF coverage %d%% · %d fully TMF630-compliant"
-        % (s["apis"], s["detected"], s["avg_structural"], s["avg_coverage"], s["fully_compliant"]),
-        "",
-        "| API | File | Structure | TMF profile | Coverage | Top gaps |",
-        "|---|---|---|---|---|---|",
-    ]
-    for r in report["rows"]:
-        p = r["profile"]
-        prof = ("%s v%s" % (p["tmf"], p["version"])) if p else "—"
-        cov = ("%d%%" % p["coverage"]) if p else "—"
-        gaps = "—"
+    rows = report["rows"]
+    ready = sum(1 for r in rows if _verdict(r) == "Ready")
+    needs = sum(1 for r in rows if _verdict(r) == "Needs work")
+    major = sum(1 for r in rows if _verdict(r) == "Major gaps")
+    total_fixable = sum(r.get("fixable", 0) for r in rows)
+    total_scaffold = sum(_scaffoldable(r) for r in rows)
+    worst = next((r for r in rows if r.get("profile")), None)   # rows are sorted worst-coverage first
+
+    out = ["# SynaptDI — API estate X-ray", ""]
+    out.append("_Generated %s · deterministic TM Forum (TMF630 + profile) analysis, no AI._" % report["generated"])
+    out += ["", "## Executive summary", ""]
+    out.append("- **%d API%s analysed** · avg structure **%d/100** · avg TMF coverage **%d%%**."
+              % (s["apis"], "" if s["apis"] == 1 else "s", s["avg_structural"], s["avg_coverage"]))
+    out.append("- Readiness: **%d ready** · **%d need work** · **%d major gaps**." % (ready, needs, major))
+    if worst:
+        wp = worst["profile"]
+        out.append("- Biggest gap: **%s** (`%s`) — only **%d%%** of %s." % (worst["api"], worst["file"], wp["coverage"], wp["tmf"]))
+    out.append("- Quick wins: **%d** structural issue%s auto-fixable, and **%d** missing operations/fields can be scaffolded straight from the canonical specs — most of the gap closes automatically (Auto-fix + Scaffold)."
+               % (total_fixable, "" if total_fixable == 1 else "s", total_scaffold))
+
+    out += ["", "## Priorities (worst first)", "",
+            "| # | API | Verdict | Structure | TMF | Coverage | Auto-fixable | Scaffoldable |",
+            "|---|---|---|---|---|---|---|---|"]
+    for i, r in enumerate(rows, 1):
+        p = r.get("profile")
+        out.append("| %d | %s | %s | %d/100 | %s | %s | %d | %d |" % (
+            i, r["api"], _verdict(r), r["structural"], (p["tmf"] if p else "—"),
+            ("%d%%" % p["coverage"]) if p else "—", r.get("fixable", 0), _scaffoldable(r)))
+
+    out += ["", "## Per-API detail"]
+    for r in rows:
+        p = r.get("profile")
+        out += ["", "### %s — `%s`" % (r["api"], r["file"])]
+        head = "Structure **%d/100**" % r["structural"]
         if p:
-            bits = []
-            if p["missing_ops"]:
-                bits.append("%d ops" % p["missing_ops"])
-            if p["missing_fields"]:
-                bits.append("%d fields" % p["missing_fields"])
-            gaps = ", ".join(bits) or "complete"
-            if p["top_fields"]:
-                gaps += " (" + ", ".join(p["top_fields"][:4]) + "…)"
-        out.append("| %s | `%s` | %d/100 | %s | %s | %s |" % (r["api"], r["file"], r["structural"], prof, cov, gaps))
-    out += [
-        "",
-        "> Coverage = how much of the official TM Forum API a spec implements (operations + resource attributes). "
-        "Structure = TMF630 design-rule conformance. Both are computed deterministically against TM Forum's published specs.",
-    ]
+            head += " · **%s v%s** coverage **%d%%**" % (p["tmf"], p["version"], p["coverage"])
+        head += " · _%s_" % _verdict(r)
+        out += [head, ""]
+        if r.get("failing"):
+            out.append("- **Structure issues (%d):** %s" % (len(r["failing"]), ", ".join(r["failing"])))
+        if p and p.get("operations"):
+            out.append("- **Missing operations (%d):** %s" % (len(p["operations"]), ", ".join("`%s`" % o for o in p["operations"])))
+        if p and p.get("fields"):
+            out.append("- **Missing %s attributes (%d):** %s" % (p.get("resource", "resource"), len(p["fields"]), ", ".join("`%s`" % f for f in p["fields"])))
+        if p:
+            rem = []
+            if r.get("fixable"):
+                rem.append("run **Auto-fix** (%d mechanical fix%s available)" % (r["fixable"], "" if r["fixable"] == 1 else "es"))
+            if _scaffoldable(r):
+                rem.append("**Scaffold** the %d missing operations/fields from %s" % (_scaffoldable(r), p["tmf"]))
+            out.append("- **Remediation:** " + ("; ".join(rem) + "." if rem else "already aligned — no action needed."))
+
+    out += ["",
+            "> Coverage = how much of the official TM Forum API a spec implements. Structure = TMF630 design-rule "
+            "conformance. Auto-fixable = mechanical TMF630 fixes; Scaffoldable = operations/fields copyable from the "
+            "canonical spec. All computed deterministically against TM Forum's published specs — no AI."]
     return "\n".join(out)
 
 
