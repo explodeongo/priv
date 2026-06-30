@@ -1,0 +1,22 @@
+name: TMF conformance
+
+on:
+  push:
+    paths: ["**/*.yaml", "**/*.yml", "**/*.json"]
+  pull_request:
+    paths: ["**/*.yaml", "**/*.yml", "**/*.json"]
+  workflow_dispatch:
+
+jobs:
+  conformance:
+    name: TM Forum (TMF630) gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Gate specs against TM Forum (TMF630)
+        uses: ./
+        with:
+          # Point this at your own spec directory (e.g. "apis" or "specs/**/*.yaml").
+          # Here we gate this repo's compliant reference spec so the check stays green.
+          path: vscode-extension/examples/product-ordering.tmf.yaml
+          min: "90"

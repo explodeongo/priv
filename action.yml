@@ -1,0 +1,29 @@
+name: "SynaptDI TMF Conformance"
+description: "Gate OpenAPI / Swagger specs against the TM Forum API Design Guidelines (TMF630). Deterministic, offline, no AI."
+branding:
+  icon: "shield"
+  color: "red"
+
+inputs:
+  path:
+    description: "File, directory, or glob of OpenAPI/Swagger specs to check."
+    required: false
+    default: "."
+  min:
+    description: "Fail the check if any spec scores below this TMF630 score (0-100)."
+    required: false
+    default: "90"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.11"
+    - name: Install dependencies
+      shell: bash
+      run: pip install --quiet pyyaml
+    - name: Run TM Forum (TMF630) conformance gate
+      shell: bash
+      run: python "${{ github.action_path }}/backend/synaptdi_check.py" "${{ inputs.path }}" --min "${{ inputs.min }}"
