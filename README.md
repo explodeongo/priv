@@ -28,6 +28,7 @@ Ask it:                                   Point it at your spec:
 - [Quick start](#quick-start-macos--linux)
 - [The VS Code extension](#the-vs-code-extension)
 - [Command-line tools](#command-line-tools)
+- [Integrate & automate (SDK · Action · MCP)](#integrate--automate)
 - [Configuration](#configuration)
 - [Project structure](#project-structure)
 - [API reference](#api-reference)
@@ -44,15 +45,22 @@ Ask it:                                   Point it at your spec:
 | Gives you | Cited answers, follow-ups | A 0–100 score, the gaps, an auto-fix |
 | Trust model | Grounded + cited | Validated against 169 official specs |
 
-The same backend serves both, and both are exposed in the **web app**, the **VS Code extension**, and the **CLI**.
+The same backend serves both — exposed through the **web app**, the **VS Code extension**, a **REST API**, a **Python SDK**, a **CLI**, a **GitHub Action**, and an **MCP server**.
 
 ---
 
 ## Where it runs
 
+One validated engine, every surface a developer or system might use:
+
 - **Web app** (`http://localhost:3000`) — Chat, Documents, **Conformance & X-ray**, Admin, Settings.
-- **VS Code extension** (`vscode-extension/`) — the agent in your editor: ask about the file you're writing, see a live compliance score, one-click fix, and run an estate X-ray. See [The VS Code extension](#the-vs-code-extension).
-- **CLI** (`backend/*.py`) — `validate_conformance.py`, `xray.py`, `synaptdi_check.py` for CI gates and folder scans. See [Command-line tools](#command-line-tools).
+- **VS Code extension** (`vscode-extension/`) — live compliance score, Auto-fix, Scaffold, and the estate X-ray in your editor. See [The VS Code extension](#the-vs-code-extension).
+- **REST API + Python SDK** — `backend/` (FastAPI, interactive OpenAPI docs at `/docs`) and a zero-dependency [`synaptdi` SDK](sdk/) for external systems.
+- **CLI** — `validate_conformance.py`, `xray.py`, `synaptdi_check.py` for folder scans and CI gates. See [Command-line tools](#command-line-tools).
+- **GitHub Action** — [`action.yml`](action.yml) gates pull requests on TMF conformance.
+- **MCP server** — [`mcp-server/`](mcp-server/) lets AI agents (Cursor, Claude Desktop, Claude Code) call SynaptDI natively.
+
+> New here? Start with the **[demo runbook](DEMO.md)**.
 
 ---
 
@@ -69,7 +77,10 @@ Detects **which** TMF API your spec is trying to be (e.g. TMF641 Service Orderin
 ### 3. Auto-fix
 Deterministically rewrites a spec to satisfy the fixable TMF630 rules (adds the missing query params, the `Error` schema, `@type`, the right status codes, camelCases names) and re-scores it. The *same* engine that flags a violation is the one that fixes it. Endpoint: `POST /conformance/fix`.
 
-### 4. API estate X-ray
+### 4. Scaffold the gaps — *generation, not just detection*
+Don't just flag what's missing — **add it**. Scaffold pulls the missing operations and resource attributes straight from the canonical TMF spec into your file (version-normalised, no dangling refs), auto-completing a partial API. Demonstrated: a stub Service Order goes **14% → 94%** coverage in one click. Engine: `backend/tmf_profile.scaffold_from_canonical`; endpoint `POST /conformance/scaffold`.
+
+### 5. API estate X-ray
 Roll the above across a whole folder/portfolio of specs into one board-ready report — every API, its structural score, its TMF coverage, and its top gaps — sorted worst-first. Engine: `backend/xray.py`; endpoint `POST /conformance/portfolio`; CLI `python xray.py <dir>`.
 
 ```
@@ -84,7 +95,7 @@ Roll the above across a whole folder/portfolio of specs into one board-ready rep
 
 ### Why you can trust it
 - **Validated:** `python validate_conformance.py` runs the engine over every canonical v4/v5 TMF spec — currently **169 specs, avg 99.9, 0 below the gate**. It exits non-zero if any official spec regresses, so it doubles as a CI guard for the engine itself.
-- **Tested:** `python test_conformance.py` — 14 unit tests locking in the rules, the auto-fixer, and profile detection.
+- **Tested:** `python test_conformance.py` — 15 unit tests locking in the rules, the auto-fixer, profile detection, scaffolding, and the X-ray.
 
 ---
 
@@ -176,7 +187,30 @@ All pure-Python, offline, and CI-friendly (`cd backend && source venv/bin/activa
 | `python validate_conformance.py [--min 90] [--json]` | Run the engine over every official TMF spec; exit 1 if any drops below the gate. Engine self-test / regression guard. |
 | `python xray.py <folder>` | API estate X-ray of a folder — prints the report and writes `synaptdi-xray.md`. |
 | `python synaptdi_check.py <files…> [--min 90]` | Gate your *own* specs in CI — exits non-zero if any scores below `--min`. See `backend/COMPLIANCE.md` for a pre-commit hook + GitHub Actions snippet. |
-| `python test_conformance.py` | The 14-test unit suite (also pytest-compatible). |
+| `python test_conformance.py` | The 15-test unit suite (also pytest-compatible). |
+
+---
+
+## Integrate & automate
+
+**Python SDK** ([`sdk/`](sdk/)) — zero-dependency client for the REST API:
+```python
+from synaptdi import SynaptDI
+sd = SynaptDI("http://localhost:8000")
+sd.check("orders.yaml")["score"]       # TMF630 score
+sd.profile("orders.yaml")["coverage"]  # % of the real canonical TMF API
+sd.xray(["a.yaml", "b.yaml"])          # portfolio report
+```
+
+**GitHub Action** ([`action.yml`](action.yml)) — gate pull requests on TMF conformance:
+```yaml
+- uses: dibuAI/SynaptDI@v1
+  with:
+    path: ./specs
+    min: "90"
+```
+
+**MCP server** ([`mcp-server/`](mcp-server/)) — let Cursor / Claude Desktop / Claude Code call SynaptDI natively (`tmf_ask`, `tmf_check`, `tmf_profile`, `tmf_scaffold`). Config in [`mcp-server/README.md`](mcp-server/README.md).
 
 ---
 
@@ -209,16 +243,20 @@ SynaptDI/
 │   ├── main.py                 ← FastAPI app: RAG query engine + all /conformance/* endpoints
 │   ├── ingest.py               ← clone + parse + embed + index the TM Forum corpus
 │   ├── conformance.py          ← TMF630 structural rule engine (deterministic)
-│   ├── tmf_profile.py          ← profile-aware conformance (detect API + diff vs canonical)
+│   ├── tmf_profile.py          ← profile-aware conformance + scaffold (diff/complete vs canonical)
 │   ├── xray.py                 ← API estate X-ray (portfolio roll-up) + CLI
 │   ├── validate_conformance.py ← validate the engine vs 169 official specs / CI gate
 │   ├── synaptdi_check.py       ← CI gate for your own specs
-│   ├── test_conformance.py     ← 14 unit tests (conformance + fixer + profile + X-ray)
+│   ├── test_conformance.py     ← 15 unit tests (conformance · fixer · profile · scaffold · X-ray)
 │   ├── COMPLIANCE.md           ← CLI usage, pre-commit hook, GitHub Actions
 │   ├── vectorstore.py · eval.py · evals/
 │   ├── chroma_db/  data/       ← generated, gitignored
 ├── frontend/app/               ← Next.js: Chat · Documents · Conformance & X-ray · Admin · Settings
-└── vscode-extension/           ← "Ask SynaptDI" extension + examples/ (demo specs)
+├── vscode-extension/           ← "Ask SynaptDI" extension + examples/ (demo specs)
+├── sdk/                        ← zero-dependency Python SDK (synaptdi)
+├── mcp-server/                 ← MCP server for Cursor / Claude / Claude Code
+├── action.yml + .github/       ← reusable GitHub Action + the TMF-conformance workflow
+└── DEMO.md                     ← demo runbook
 ```
 
 ---
@@ -235,6 +273,7 @@ SynaptDI/
 | `POST /conformance/text` | TMF630 score **+ profile coverage**, from a JSON body — used by the editor |
 | `POST /conformance/profile` | Detect the TMF API and diff vs the canonical spec |
 | `POST /conformance/fix` | Auto-fix fixable TMF630 violations, return the corrected spec |
+| `POST /conformance/scaffold` | Complete a partial spec from the canonical TMF spec |
 | `POST /conformance/portfolio` | API estate X-ray across many specs (+ rendered markdown) |
 
 Full interactive docs at `http://localhost:8000/docs`.
@@ -270,6 +309,7 @@ Full interactive docs at `http://localhost:8000/docs`.
 | Backend | FastAPI + Python |
 | Frontend | Next.js + Tailwind CSS |
 | Editor | VS Code extension (TypeScript) |
+| Integrations | REST API · Python SDK · MCP server · GitHub Action (all stdlib / no extra deps) |
 
 ---
 
