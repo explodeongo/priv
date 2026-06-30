@@ -809,31 +809,30 @@ function ManagementTab({ user }: { user: { role: string } | null }) {
 // ── Performance Tab ────────────────────────────────────────────────────────────
 function PerformanceTab() {
   const [docs, setDocs]         = useState<Doc[]>([]);
-  const [hits, setHits]         = useState<Record<string, number>>({});
+  const [perf, setPerf]         = useState<Record<string, { queries: number; relevance: number }>>({});
   const [period, setPeriod]     = useState<"7d"|"30d"|"90d">("30d");
   const [sortBy, setSortBy]     = useState<"queries"|"chunks">("queries");
   const [loading, setLoading]   = useState(true);
 
   useEffect(() => {
+    setLoading(true);
     Promise.all([
       fetch(`${API}/documents`).then(r => r.json()),
-      fetch(`${API}/stats/queries`).then(r => r.json()),
-    ]).then(([docData, hitsData]) => {
+      fetch(`${API}/stats/documents?period=${period}`).then(r => r.json()),
+    ]).then(([docData, perfData]) => {
       setDocs(docData.documents ?? []);
-      setHits(hitsData.hits ?? {});
+      setPerf(perfData.documents ?? {});
     }).catch(() => {}).finally(() => setLoading(false));
-  }, []);
+  }, [period]);   // real per-period data — re-fetch when the time window changes
 
   const indexed = docs.filter(d => d.status === "indexed");
-  const multiplier: Record<string, number> = { "7d": 0.23, "30d": 1, "90d": 2.8 };
-  const m = multiplier[period];
 
-  // Enrich with hit counts
+  // Real per-document metrics from the backend: genuine hit counts + average
+  // retrieval relevance (1 - cosine distance) over the selected window.
   const enriched = indexed.map(d => ({
     ...d,
-    queries: Math.round((hits[d.name] ?? 0) * m),
-    // Synthetic relevance based on chunk count (more chunks → better coverage)
-    relevance: d.chunks > 0 ? Math.min(0.97, 0.70 + (d.chunks / 3000) * 0.25) : 0,
+    queries: perf[d.name]?.queries ?? 0,
+    relevance: perf[d.name]?.relevance ?? 0,
   }));
 
   const sorted = [...enriched].sort((a, b) =>
@@ -871,6 +870,12 @@ function PerformanceTab() {
           ))}
         </div>
       </div>
+
+      {totalQueries === 0 && (
+        <div className="text-xs text-gray-500 dark:text-slate-400 bg-gray-50 dark:bg-slate-800/60 border border-gray-200 dark:border-slate-700 rounded-xl px-4 py-2.5">
+          No query activity in the last {period === "7d" ? "7 days" : period === "30d" ? "30 days" : "90 days"} yet — these metrics are recorded live and grow as people ask questions in chat.
+        </div>
+      )}
 
       {/* KPI cards */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">

@@ -23,6 +23,8 @@ def _paths(spec: dict) -> dict:
 
 
 def _resolve_ref(spec: dict, ref: str) -> dict:
+    if not ref or not ref.startswith("#"):
+        return {}                       # external / file refs aren't resolvable here — degrade safely
     node: Any = spec
     for part in ref.lstrip("#/").split("/"):
         node = node.get(part, {}) if isinstance(node, dict) else {}
