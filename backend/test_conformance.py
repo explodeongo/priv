@@ -203,6 +203,43 @@ def test_scaffold_raises_coverage_and_is_clean():
     conformance.check_spec(out)                          # merged spec still scores without crashing
 
 
+# ── ODA Component conformance ─────────────────────────────────────────────────
+def test_oda_component_parse():
+    import oda
+    manifest = """
+apiVersion: oda.tmforum.org/v1
+kind: Component
+metadata:
+  name: test-comp
+spec:
+  name: test-comp
+  coreFunction:
+    exposedAPIs:
+    - name: productinventory
+      apiType: openapi
+      specification:
+      - url: https://x/TMF637-ProductInventory-v4.0.0.swagger.json
+    dependentAPIs:
+    - name: party
+      apiType: openapi
+      specification:
+      - url: https://x/TMF632-Party-v4.0.0.swagger.json
+  securityFunction:
+    exposedAPIs:
+    - name: partyrole
+      apiType: openapi
+      specification:
+      - url: https://x/TMF669-PartyRole-v4.0.0.swagger.json
+"""
+    r = oda.check_component(manifest)
+    assert r["component"] == "test-comp", r
+    ex = r["exposed"]
+    assert any(e["tmf"] == "TMF637" and e["segment"] == "coreFunction" for e in ex), ex
+    assert any(e["tmf"] == "TMF669" and e["segment"] == "securityFunction" for e in ex), ex
+    assert any(d["tmf"] == "TMF632" for d in r["dependent"]), r["dependent"]
+    assert "ODA Component conformance" in oda.render_markdown(r)
+
+
 if __name__ == "__main__":
     import sys
     tests = [(n, f) for n, f in sorted(globals().items()) if n.startswith("test_") and callable(f)]
