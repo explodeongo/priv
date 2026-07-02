@@ -1,5 +1,5 @@
 "use client";
-import { useState, useRef, Fragment } from "react";
+import { useState, useRef, useEffect, Fragment } from "react";
 import AppShell from "../components/AppShell";
 import { useToast } from "../components/Toast";
 
@@ -83,6 +83,12 @@ export default function ConformancePage() {
   const toast = useToast();
 
   const reset = () => { setReport(null); setPortfolio(null); setOda(null); setError(""); setFileName(""); setFixed(null); setSpecText(""); };
+
+  // Deep-link: /conformance?mode=component|portfolio (used by the ODA Map page).
+  useEffect(() => {
+    const m = new URLSearchParams(window.location.search).get("mode");
+    if (m === "component" || m === "portfolio" || m === "single") setMode(m);
+  }, []);
 
   const checkSingle = async (file: File) => {
     setLoading(true); setError(""); setReport(null); setFixed(null); setFileName(file.name);

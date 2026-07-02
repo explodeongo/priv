@@ -155,6 +155,61 @@ def render_markdown(report: dict) -> str:
     return "\n".join(out)
 
 
+# ── ODA Component catalog (the components map) ────────────────────────────────
+_CATALOG_FILE = os.path.join(_HERE, "oda_components.json")
+_CATALOG = None   # cached, enriched catalog
+
+
+def _manifest_apis():
+    """{manifest-name(lower): {exposed, dependent}} from the plain (non-Helm) component
+    manifests shipped in the ingested reference-example-components repo."""
+    out = {}
+    for f in glob.glob(os.path.join(_DATA, "reference-example-components", "source", "*", "*.component.yaml")):
+        try:
+            text = open(f, encoding="utf-8", errors="ignore").read()
+            if "{{" in text:                       # Helm-templated → not plain YAML
+                continue
+            # The repo organizes manifests one directory per component — the directory
+            # name (e.g. source/ProductInventory/) is the reliable component key.
+            dirname = os.path.basename(os.path.dirname(f)).lower().replace("-", "")
+            for d in yaml.safe_load_all(text.replace("\x00", "")):
+                if not (isinstance(d, dict) and d.get("kind") == "Component"):
+                    continue
+                spec = d.get("spec") or {}
+                ex_raw, dep_raw = _collect(spec)
+                apis = {
+                    "exposed": [{"name": a.get("name"), "segment": seg, "tmf": _tmf_of(a)}
+                                for seg, a in ex_raw if a.get("apiType") == "openapi"],
+                    "dependent": [{"name": a.get("name"), "tmf": _tmf_of(a)}
+                                  for seg, a in dep_raw if a.get("apiType") == "openapi"],
+                }
+                if apis["exposed"] and dirname not in out:
+                    out[dirname] = apis
+        except Exception:
+            continue
+    return out
+
+
+def catalog() -> dict:
+    """The official ODA component map (35 components, TM Forum v1.0.0 release), enriched
+    with exposed/dependent APIs where a reference manifest exists in the local corpus."""
+    global _CATALOG
+    if _CATALOG is not None:
+        return _CATALOG
+    data = json.load(open(_CATALOG_FILE, encoding="utf-8"))
+    manifests = _manifest_apis()
+    for c in data["components"]:
+        short = c["short"].lower()
+        hit = manifests.get(short) or next(
+            (v for k, v in manifests.items() if short.startswith(k) and len(k) >= 8), None)
+        if hit:
+            c["exposed"] = hit["exposed"]
+            c["dependent"] = hit["dependent"]
+        c["spec_url"] = data["spec_url_pattern"].replace("{code}", c["code"]).replace("{short}", c["short"])
+    _CATALOG = data
+    return data
+
+
 if __name__ == "__main__":
     import sys
     tmf_profile.build_index()

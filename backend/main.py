@@ -1527,6 +1527,12 @@ def conformance_component(req: ConformanceFixReq):
     rep["markdown"] = oda.render_markdown(rep)
     return rep
 
+@app.get("/oda/components")
+def oda_components():
+    """The official ODA component map (TM Forum v1.0.0 — 35 components in 6 functional
+    blocks), enriched with exposed/dependent APIs where reference manifests exist."""
+    return oda.catalog()
+
 # ── Documents ──────────────────────────────────────────────────────────────────
 @app.get("/documents/library")
 def documents_library():

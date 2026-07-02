@@ -240,6 +240,15 @@ spec:
     assert "ODA Component conformance" in oda.render_markdown(r)
 
 
+def test_oda_catalog():
+    import oda
+    c = oda.catalog()
+    codes = [x["code"] for x in c["components"]]
+    assert len(codes) == 35 and len(set(codes)) == 35, len(codes)          # full official map, no dupes
+    assert set(x["block"] for x in c["components"]) <= set(c["blocks"])    # every block labelled
+    assert all(x["spec_url"].startswith("https://") for x in c["components"])
+
+
 if __name__ == "__main__":
     import sys
     tests = [(n, f) for n, f in sorted(globals().items()) if n.startswith("test_") and callable(f)]

@@ -68,10 +68,17 @@ const ICheckSpec = () => (
   </svg>
 );
 
+const IHex = () => (
+  <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinejoin="round">
+    <path d="M12 2.5l8.2 4.75v9.5L12 21.5l-8.2-4.75v-9.5z"/>
+  </svg>
+);
+
 const NAV = [
   { label: "Chat",        href: "/",            icon: <IChat />,      exact: true  },
   { label: "Documents",   href: "/documents",   icon: <IDocs />,      exact: false },
   { label: "Conformance", href: "/conformance", icon: <ICheckSpec />, exact: false },
+  { label: "ODA Map",     href: "/oda",         icon: <IHex />,       exact: false },
   { label: "Admin",       href: "/admin",       icon: <IAdmin />,     exact: false, adminOnly: true },
   { label: "Settings",    href: "/settings",    icon: <ISettings />,  exact: false },
 ];
