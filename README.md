@@ -275,6 +275,7 @@ SynaptDI/
 | `POST /conformance/fix` | Auto-fix fixable TMF630 violations, return the corrected spec |
 | `POST /conformance/scaffold` | Complete a partial spec from the canonical TMF spec |
 | `POST /conformance/portfolio` | API estate X-ray across many specs (+ rendered markdown) |
+| `POST /conformance/component` | **ODA Component conformance** — score the APIs a `.component.yaml` exposes/depends on |
 
 Full interactive docs at `http://localhost:8000/docs`.
 

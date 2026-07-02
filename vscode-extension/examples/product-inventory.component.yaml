@@ -1,0 +1,31 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Example ODA Component manifest — for SynaptDI's ODA Component conformance.
+# Web app → Conformance → "ODA Component" tab → drop this file.
+# CLI:  cd backend && python oda.py ../vscode-extension/examples/product-inventory.component.yaml
+# It scores every TM Forum Open API this component exposes + lists what it depends on.
+# ─────────────────────────────────────────────────────────────────────────────
+apiVersion: oda.tmforum.org/v1
+kind: Component
+metadata:
+  name: productinventory
+spec:
+  name: productinventory
+  version: 1.0.0
+  description: Product Inventory ODA component (reference example).
+  coreFunction:
+    exposedAPIs:
+    - name: productInventoryManagement
+      apiType: openapi
+      specification:
+      - url: https://raw.githubusercontent.com/tmforum-apis/TMF637_ProductInventory/master/TMF637-ProductInventory-v4.0.0.swagger.json
+    dependentAPIs:
+    - name: party
+      apiType: openapi
+      specification:
+      - url: https://raw.githubusercontent.com/tmforum-apis/TMF632_Party/master/TMF632-Party-v4.0.0.swagger.json
+  securityFunction:
+    exposedAPIs:
+    - name: partyRole
+      apiType: openapi
+      specification:
+      - url: https://raw.githubusercontent.com/tmforum-apis/TMF669_PartyRole/master/TMF669-PartyRole-v4.0.0.swagger.json

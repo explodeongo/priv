@@ -63,6 +63,12 @@ TOOLS = [
         "inputSchema": {"type": "object", "properties": {"spec": {"type": "string"}}, "required": ["spec"]},
         "handler": lambda a: _http("POST", "/conformance/scaffold", {"content": _spec(a["spec"])}),
     },
+    {
+        "name": "tmf_component",
+        "description": "Score an ODA Component manifest (.component.yaml) — checks each TM Forum Open API it exposes and depends on. Pass manifest text or a file path.",
+        "inputSchema": {"type": "object", "properties": {"spec": {"type": "string", "description": "ODA component manifest text or a file path"}}, "required": ["spec"]},
+        "handler": lambda a: _http("POST", "/conformance/component", {"content": _spec(a["spec"])}),
+    },
 ]
 
 

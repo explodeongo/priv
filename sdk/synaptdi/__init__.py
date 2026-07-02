@@ -91,6 +91,12 @@ class SynaptDI:
         content, _ = self._read(spec)
         return self._request("POST", "/conformance/scaffold", {"content": content})
 
+    def component(self, manifest) -> dict:
+        """ODA Component conformance — score the TMF Open APIs an ODA component manifest
+        (.component.yaml) exposes and depends on. Accepts manifest text or a file path."""
+        content, _ = self._read(manifest)
+        return self._request("POST", "/conformance/component", {"content": content})
+
     def xray(self, specs) -> dict:
         """Portfolio X-ray across many specs. `specs` = file paths or {filename, content} dicts."""
         items = []

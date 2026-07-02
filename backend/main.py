@@ -31,6 +31,7 @@ import ingest   # reuse the ingestion parsers: parse_openapi_spec, parse_markdow
 import conformance   # TMF630 conformance rule engine
 import tmf_profile   # profile-aware conformance (diff vs canonical TMF specs)
 import xray          # API estate X-ray (portfolio roll-up)
+import oda           # ODA Component conformance
 from vectorstore import get_store, reset_store   # backend-agnostic vector store (Chroma today)
 
 _chroma_lock = threading.Lock()   # protects singleton + upsert/query overlap
@@ -1512,6 +1513,19 @@ def conformance_scaffold(req: ConformanceFixReq):
         out = json.dumps(merged, indent=2, ensure_ascii=False)
     return {"content": out, "format": fmt, "detected": res["detected"], "added": res["added"],
             "coverage_before": res["coverage_before"], "coverage_after": res["coverage_after"]}
+
+@app.post("/conformance/component")
+def conformance_component(req: ConformanceFixReq):
+    """ODA Component conformance: parse an ODA Component manifest (.component.yaml) and
+    score each TM Forum Open API it exposes/depends on. Deterministic, no LLM."""
+    text = req.content or ""
+    if len(text) > 2_000_000:
+        raise HTTPException(413, "Manifest too large.")
+    rep = oda.check_component(text)
+    if not rep.get("component"):
+        raise HTTPException(400, rep.get("error", "Not an ODA Component manifest (kind: Component)."))
+    rep["markdown"] = oda.render_markdown(rep)
+    return rep
 
 # ── Documents ──────────────────────────────────────────────────────────────────
 @app.get("/documents/library")
