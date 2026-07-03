@@ -57,6 +57,8 @@ export default function ConformancePage() {
   const [loading, setLoading] = useState(false);
   const [fixing, setFixing] = useState(false);
   const [fixed, setFixed] = useState<{ score: number; fixed: string[]; content: string; format: string } | null>(null);
+  const [scaffolding, setScaffolding] = useState(false);
+  const [scaffolded, setScaffolded] = useState<{ before: number; after: number; ops: number; fields: number; content: string; format: string } | null>(null);
   const [error, setError] = useState("");
   const [dragging, setDragging] = useState(false);
   const [fileName, setFileName] = useState("");
@@ -64,7 +66,7 @@ export default function ConformancePage() {
   const multiRef = useRef<HTMLInputElement>(null);
   const toast = useToast();
 
-  const reset = () => { setReport(null); setPortfolio(null); setError(""); setFileName(""); setFixed(null); setSpecText(""); };
+  const reset = () => { setReport(null); setPortfolio(null); setError(""); setFileName(""); setFixed(null); setScaffolded(null); setSpecText(""); };
 
   // Deep-link: /conformance?mode=portfolio
   useEffect(() => {
@@ -73,7 +75,7 @@ export default function ConformancePage() {
   }, []);
 
   const checkSingle = async (file: File) => {
-    setLoading(true); setError(""); setReport(null); setFixed(null); setFileName(file.name);
+    setLoading(true); setError(""); setReport(null); setFixed(null); setScaffolded(null); setFileName(file.name);
     try {
       const content = await file.text();
       setSpecText(content);
@@ -114,6 +116,26 @@ export default function ConformancePage() {
     } catch (e: any) {
       toast(e?.message || "Auto-fix failed — is the backend running?", "error");
     } finally { setFixing(false); }
+  };
+
+  const scaffold = async () => {
+    if (!specText) return;
+    setScaffolding(true);
+    try {
+      const r = await fetch(`${API}/conformance/scaffold`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ content: specText }),
+      });
+      if (!r.ok) { const d = await r.json().catch(() => ({ detail: `HTTP ${r.status}` })); throw new Error(d.detail || `HTTP ${r.status}`); }
+      const out = await r.json();
+      const ops = out.added?.operations?.length || 0;
+      const fields = out.added?.fields?.length || 0;
+      if (!ops && !fields) { toast("Already complete — nothing to scaffold.", "warning"); return; }
+      setScaffolded({ before: out.coverage_before, after: out.coverage_after, ops, fields, content: out.content, format: out.format });
+      toast(`Scaffolded +${ops} ops, +${fields} fields → ${out.coverage_after}% coverage`, "success");
+    } catch (e: any) {
+      toast(e?.message || "Scaffold failed — is the backend running?", "error");
+    } finally { setScaffolding(false); }
   };
 
   const checkPortfolio = async (files: File[]) => {
@@ -258,6 +280,16 @@ export default function ConformancePage() {
                   </div>
                 )}
 
+                {scaffolded && (
+                  <div className="mt-3 flex items-center justify-between gap-3 rounded-xl border border-green-200 dark:border-green-500/30 bg-green-50 dark:bg-green-500/10 px-4 py-2.5">
+                    <span className="text-xs text-green-800 dark:text-green-300">
+                      Scaffolded: <span className="font-semibold">+{scaffolded.ops} operations, +{scaffolded.fields} fields</span> — coverage <span className="font-bold">{scaffolded.before}% → {scaffolded.after}%</span>
+                    </span>
+                    <button onClick={() => download(`scaffolded-${fileName || "spec." + scaffolded.format}`, scaffolded.content, "text/plain")}
+                      className="text-xs font-medium text-green-700 dark:text-green-300 underline underline-offset-2 whitespace-nowrap">Download completed spec</button>
+                  </div>
+                )}
+
                 {/* Profile coverage vs the real TMF spec */}
                 {showProfile && det && prof && (
                   <div className="mt-4 bg-white dark:bg-slate-900 rounded-2xl border border-gray-200 dark:border-slate-800 shadow-sm p-5">
@@ -269,6 +301,12 @@ export default function ConformancePage() {
                       <div className="text-right flex-shrink-0">
                         <div className="text-2xl font-extrabold" style={{ color: covColor(prof.coverage ?? 0) }}>{prof.coverage ?? 0}%</div>
                         <div className="text-[10px] text-gray-400 dark:text-slate-500">reference coverage</div>
+                        {((prof.operations?.missing.length ?? 0) + (prof.resource?.missing.length ?? 0)) > 0 && (
+                          <button onClick={scaffold} disabled={scaffolding}
+                            className="mt-2 text-xs font-medium px-3 py-1.5 rounded-lg bg-red-600 hover:bg-red-700 disabled:opacity-60 text-white transition-colors whitespace-nowrap">
+                            {scaffolding ? "Scaffolding…" : "Complete with Scaffold"}
+                          </button>
+                        )}
                       </div>
                     </div>
                     <div className="h-2 rounded-full bg-gray-100 dark:bg-slate-800 overflow-hidden">
