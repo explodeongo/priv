@@ -78,7 +78,9 @@ def _sub_schema(spec, prop):
 
 
 def _desc(spec, prop):
-    """Terse 'type — description' for a property, best-effort."""
+    """Terse 'type — description' for a property, best-effort. When the property has no
+    description of its own, fall back to the referenced schema's description (still
+    spec-sourced, never invented)."""
     p = _resolve(spec, prop) if isinstance(prop, dict) and "$ref" in prop else (prop or {})
     t = p.get("type", "")
     if t == "array":
@@ -88,6 +90,10 @@ def _desc(spec, prop):
     elif not t and isinstance(prop, dict) and prop.get("$ref"):
         t = prop["$ref"].split("/")[-1]
     d = (p.get("description") or "").strip().split("\n")[0]
+    if not d:
+        _sn, sub = _sub_schema(spec, prop)
+        if sub:
+            d = (sub.get("description") or "").strip().split("\n")[0]
     return t, (d[:90] + ("…" if len(d) > 90 else ""))
 
 
@@ -186,32 +192,49 @@ def answer(question: str):
     ver = meta.get("version") or ""
     disp = re.sub(r"_(Create|FVO|MVO|Update)$", "", name)
 
-    head = f"**{tmf + ' — ' if tmf else ''}{title}{f' (v{ver})' if ver else ''}**"
+    def _clean_type(t):
+        return re.sub(r"_(FVO|MVO|Create|Update)\b", "", t or "")
+
+    def _cell(x):                                  # keep pipes/newlines from breaking the table
+        return (x or "").replace("|", "/").replace("\n", " ").strip() or "—"
+
+    all_fields = list(props.keys())
+    optional = [f for f in all_fields if f not in req]
+    # Lead the optional sample with business attributes; push @-meta fields to the end.
+    optional_sample = [f for f in optional if not f.startswith("@")] + [f for f in optional if f.startswith("@")]
+    head = f"**{tmf + ' — ' if tmf else ''}{title}{f' (v{ver})' if ver else ''}** · resource **{disp}**"
 
     if not req:
-        md = (f"{head}\n\nThe **{disp}** resource has **no mandatory fields** — every attribute is "
-              f"optional in the {tmf or 'canonical'} specification.")
-        return {"answer": md, "sources": [_citation(meta, disp)], "tmf": tmf, "resource": disp}
+        md = [head, "",
+              f"The **{disp}** resource has **no mandatory fields** — all {len(all_fields)} "
+              f"attributes are optional in {tmf or 'the canonical spec'}."]
+        if optional:
+            md += ["", "Fields include " + ", ".join(f"`{f}`" for f in optional_sample[:16])
+                   + ("…" if len(optional) > 16 else "") + "."]
+        md += ["", "_Read directly from the canonical schema — deterministic, not generated._"]
+        return {"answer": "\n".join(md), "sources": [_citation(meta, disp)], "tmf": tmf, "resource": disp}
 
     lines = [head, "",
-             f"The **{disp}** resource has **{len(req)} mandatory field{'s' if len(req) != 1 else ''}**:"]
+             f"**{len(req)} of {len(all_fields)} fields are mandatory** — these must be provided when "
+             f"creating a {disp}:", "",
+             "| Field | Type | Description |", "|---|---|---|"]
     for f in req:
         t, d = _desc(spec, props.get(f, {}))
-        row = f"- **`{f}`**"
-        if t:
-            row += f" — {t}"
-        if d:
-            row += f" ({d})"
-        lines.append(row)
+        lines.append(f"| `{f}` | {_cell(_clean_type(t))} | {_cell(d)} |")
+
+    for f in req:                                  # expand array-of-subresource requirements
         sub_name, sub_def = _sub_schema(spec, props.get(f, {}))
         if sub_def:
             sub_req = _required(spec, sub_def)
             if sub_req:
-                lines.append(f"    - each **`{f}`** ({sub_name}) in turn requires: "
-                             + ", ".join(f"`{r}`" for r in sub_req))
-    lines.append("")
-    lines.append(f"_Read directly from the {tmf or 'canonical'} schema's `required` list — "
-                 f"deterministic, not generated._")
+                lines += ["", f"Each **`{f}`** ({_clean_type(sub_name)}) in turn requires: "
+                          + ", ".join(f"`{r}`" for r in sub_req) + "."]
+
+    if optional:
+        lines += ["", f"The remaining **{len(optional)} attributes are optional**, including "
+                  + ", ".join(f"`{f}`" for f in optional_sample[:12]) + ("…" if len(optional) > 12 else "") + "."]
+    lines += ["", f"_Read directly from the {tmf or 'canonical'} schema's `required` list — "
+              f"deterministic, not generated._"]
     return {"answer": "\n".join(lines), "sources": [_citation(meta, disp)], "tmf": tmf, "resource": disp}
 
 
