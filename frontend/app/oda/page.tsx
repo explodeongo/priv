@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import AppShell from "../components/AppShell";
 
@@ -9,6 +9,12 @@ interface CompApi { name: string; segment: string; tmf: string; }
 interface Comp {
   code: string; short: string; name: string; block: string;
   spec_url?: string; exposed?: CompApi[]; dependent?: { name: string; tmf: string }[];
+}
+interface ScoredApi { name: string; segment: string; tmf: string; resolved: boolean; score?: number; coverage?: number | null; api?: string; }
+interface OdaReport {
+  component: string;
+  summary: { exposed_openapi: number; dependent_openapi: number; scored: number; avg_score: number; all_conformant: boolean };
+  exposed: ScoredApi[]; dependent: { name: string; segment: string; tmf: string }[]; markdown: string;
 }
 interface Catalog {
   release: string; directory_url: string;
@@ -36,6 +42,14 @@ const SEG: Record<string, { label: string; color: string }> = {
 };
 const segInfo = (s: string) => SEG[s] || { label: s, color: "#6b7280" };
 
+
+function download(name: string, text: string) {
+  const url = URL.createObjectURL(new Blob([text], { type: "text/markdown" }));
+  const a = document.createElement("a");
+  a.href = url; a.download = name; a.click();
+  URL.revokeObjectURL(url);
+}
+
 function Hex({ color, size = 26 }: { color: string; size?: number }) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" className="flex-shrink-0">
@@ -53,6 +67,26 @@ export default function OdaPage() {
   const [q, setQ] = useState("");
   const [block, setBlock] = useState<string>("all");
   const [sel, setSel] = useState<Comp | null>(null);
+  const [report, setReport] = useState<OdaReport | null>(null);
+  const [checking, setChecking] = useState(false);
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  const validate = async (file: File) => {
+    setChecking(true);
+    try {
+      const content = await file.text();
+      const r = await fetch(`${API}/conformance/component`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ content }),
+      });
+      if (!r.ok) { const d = await r.json().catch(() => ({ detail: `HTTP ${r.status}` })); throw new Error(d.detail || `HTTP ${r.status}`); }
+      setSel(null);
+      setReport(await r.json());
+    } catch (e: any) {
+      setError(e?.message || "Validation failed — is the backend running on port 8000?");
+      setTimeout(() => setError(""), 6000);
+    } finally { setChecking(false); }
+  };
 
   useEffect(() => {
     fetch(`${API}/oda/components`)
@@ -64,7 +98,7 @@ export default function OdaPage() {
 
   // Esc closes the detail panel.
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setSel(null); };
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") { setReport(null); setSel(null); } };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, []);
@@ -105,12 +139,21 @@ export default function OdaPage() {
               </span>
             )}
           </div>
-          {cat && (
-            <a href={cat.directory_url} target="_blank" rel="noreferrer"
-              className="text-xs text-gray-500 dark:text-slate-400 hover:text-red-600 dark:hover:text-red-400 transition-colors hidden sm:block">
-              tmforum.org directory ↗
-            </a>
-          )}
+          <div className="flex items-center gap-2.5">
+            {cat && (
+              <a href={cat.directory_url} target="_blank" rel="noreferrer"
+                className="text-xs text-gray-500 dark:text-slate-400 hover:text-red-600 dark:hover:text-red-400 transition-colors hidden sm:block">
+                tmforum.org directory ↗
+              </a>
+            )}
+            <input ref={fileRef} type="file" accept=".yaml,.yml,.json" className="hidden"
+              onChange={(e) => { const f = e.target.files?.[0]; if (f) validate(f); e.currentTarget.value = ""; }} />
+            <button onClick={() => fileRef.current?.click()} disabled={checking}
+              className="flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg bg-red-600 hover:bg-red-700 disabled:opacity-60 text-white transition-colors">
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m5.6 2A9 9 0 1 1 12 3a9 9 0 0 1 9.6 9z" /></svg>
+              {checking ? "Validating…" : "Validate a component"}
+            </button>
+          </div>
         </header>
 
         <main className="flex-1 overflow-y-auto">
@@ -235,7 +278,7 @@ export default function OdaPage() {
                       className="flex items-center justify-center gap-1.5 text-xs font-medium px-3 py-2 rounded-xl border border-gray-200 dark:border-slate-700 text-gray-600 dark:text-slate-300 hover:border-gray-300 dark:hover:border-slate-500 transition-colors">
                       Specification ↗
                     </a>
-                    <button onClick={() => router.push("/conformance?mode=component")}
+                    <button onClick={() => fileRef.current?.click()}
                       className="flex items-center justify-center gap-1.5 text-xs font-medium px-3 py-2 rounded-xl border border-gray-200 dark:border-slate-700 text-gray-600 dark:text-slate-300 hover:border-gray-300 dark:hover:border-slate-500 transition-colors">
                       Validate implementation
                     </button>
@@ -271,7 +314,7 @@ export default function OdaPage() {
                   </div>
                 ) : (
                   <div className="text-xs text-gray-500 dark:text-slate-400 bg-gray-50 dark:bg-slate-800/50 border border-gray-200 dark:border-slate-800 rounded-xl px-3.5 py-3 leading-relaxed">
-                    The machine-readable API list for this component lives in its official specification (link above). Ask the AI for a grounded summary, or drop your own <code className="font-mono">.component.yaml</code> into <span className="font-medium">Validate implementation</span> to score it.
+                    The machine-readable API list for this component lives in its official specification (link above). Ask the AI for a grounded summary, or or click <span className="font-medium">Validate implementation</span> and drop your own <code className="font-mono">.component.yaml</code> to score it right here.
                   </div>
                 )}
 
@@ -280,6 +323,101 @@ export default function OdaPage() {
                 </p>
               </div>
             </aside>
+          </div>
+        )}
+
+        {/* -- Component validation report -- */}
+        {report && (
+          <div className="fixed inset-0 z-50" role="dialog" aria-modal="true">
+            <div className="absolute inset-0 bg-black/40 backdrop-blur-[1px]" onClick={() => setReport(null)} />
+            <div className="absolute inset-x-0 top-[6vh] mx-auto w-full max-w-2xl px-4">
+              <div className="bg-white dark:bg-slate-900 rounded-2xl border border-gray-200 dark:border-slate-800 shadow-2xl max-h-[86vh] flex flex-col" style={{ animation: "fadeUp .2s ease-out" }}>
+                <style>{`@keyframes fadeUp { from { opacity:0; transform:translateY(10px);} to {opacity:1; transform:none;} }`}</style>
+
+                <div className="flex items-center gap-4 px-5 py-4 border-b border-gray-100 dark:border-slate-800">
+                  <div className="relative flex-shrink-0 w-16 h-16 rounded-full flex items-center justify-center"
+                    style={{ background: `conic-gradient(${report.summary.avg_score >= 90 ? "#16a34a" : report.summary.avg_score >= 60 ? "#d97706" : "#dc2626"} ${report.summary.avg_score * 3.6}deg, var(--ring-track, #e5e7eb) 0deg)` }}>
+                    <div className="w-[52px] h-[52px] rounded-full bg-white dark:bg-slate-900 flex flex-col items-center justify-center">
+                      <span className="text-lg font-extrabold text-gray-900 dark:text-slate-100">{report.summary.avg_score}</span>
+                      <span className="text-[9px] text-gray-400 -mt-0.5">avg</span>
+                    </div>
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="text-[11px] font-semibold uppercase tracking-wide text-gray-400">ODA Component conformance</div>
+                    <h2 className="text-base font-bold text-gray-900 dark:text-slate-100 truncate">{report.component}</h2>
+                    <div className="flex flex-wrap gap-1.5 mt-1 text-[11px]">
+                      <span className={`px-2 py-0.5 rounded-full border ${report.summary.all_conformant ? "bg-green-50 dark:bg-green-500/10 text-green-700 dark:text-green-400 border-green-200 dark:border-green-500/30" : "bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400 border-amber-200 dark:border-amber-500/30"}`}>
+                        {report.summary.all_conformant ? "ODA-conformant" : "gaps found"}
+                      </span>
+                      <span className="px-2 py-0.5 rounded-full bg-gray-100 dark:bg-slate-800 text-gray-600 dark:text-slate-300">{report.summary.exposed_openapi} exposed</span>
+                      <span className="px-2 py-0.5 rounded-full bg-gray-100 dark:bg-slate-800 text-gray-600 dark:text-slate-300">{report.summary.dependent_openapi} dependent</span>
+                    </div>
+                  </div>
+                  <button onClick={() => setReport(null)} aria-label="Close"
+                    className="p-1.5 rounded-lg text-gray-400 hover:text-gray-700 dark:hover:text-slate-200 hover:bg-gray-100 dark:hover:bg-slate-800 transition-colors flex-shrink-0">
+                    <svg className="w-[18px] h-[18px]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" d="M6 18L18 6M6 6l12 12" /></svg>
+                  </button>
+                </div>
+
+                <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
+                  {Array.from(new Set(report.exposed.map((a) => a.segment))).map((seg) => {
+                    const info = segInfo(seg);
+                    const apis = report.exposed.filter((a) => a.segment === seg);
+                    return (
+                      <div key={seg}>
+                        <div className="flex items-center gap-2 mb-2">
+                          <span className="w-2.5 h-2.5 rounded-sm" style={{ background: info.color }} />
+                          <span className="text-xs font-semibold uppercase tracking-wide" style={{ color: info.color }}>{info.label}</span>
+                        </div>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                          {apis.map((a, i) => (
+                            <div key={i} className="rounded-xl border border-gray-200 dark:border-slate-800 p-3.5" style={{ borderLeft: `3px solid ${info.color}` }}>
+                              <div className="flex items-center justify-between gap-2">
+                                <div className="min-w-0">
+                                  <div className="text-sm font-semibold text-gray-900 dark:text-slate-100 truncate">{a.name}</div>
+                                  <div className="text-[11px] text-gray-400">{a.tmf || "-"}{a.api ? ` · ${a.api}` : ""}</div>
+                                </div>
+                                {typeof a.score === "number"
+                                  ? <span className="text-sm font-bold flex-shrink-0" style={{ color: a.score >= 90 ? "#16a34a" : a.score >= 60 ? "#d97706" : "#dc2626" }}>{a.score}<span className="text-gray-400 text-xs font-normal">/100</span></span>
+                                  : <span className="text-[11px] text-gray-400 flex-shrink-0">spec not found</span>}
+                              </div>
+                              {typeof a.coverage === "number" && (
+                                <div className="mt-2">
+                                  <div className="flex justify-between text-[10px] text-gray-400 mb-0.5"><span>coverage vs canonical</span><span>{a.coverage}%</span></div>
+                                  <div className="h-1.5 rounded-full bg-gray-100 dark:bg-slate-800 overflow-hidden">
+                                    <div className="h-full rounded-full" style={{ width: `${a.coverage}%`, background: a.coverage >= 80 ? "#16a34a" : a.coverage >= 50 ? "#d97706" : "#dc2626" }} />
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  })}
+
+                  {report.dependent.length > 0 && (
+                    <div className="bg-gray-50 dark:bg-slate-800/40 rounded-xl border border-gray-200 dark:border-slate-800 px-4 py-3">
+                      <div className="text-xs font-semibold text-gray-600 dark:text-slate-300 mb-1.5">Depends on</div>
+                      <div className="flex flex-wrap gap-1.5">
+                        {report.dependent.map((d, i) => (
+                          <code key={i} className="text-[11px] font-mono bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 text-gray-600 dark:text-slate-300 rounded px-1.5 py-0.5">{d.name} ({d.tmf || "?"})</code>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                <div className="flex items-center justify-between px-5 py-3.5 border-t border-gray-100 dark:border-slate-800">
+                  <p className="text-[11px] text-gray-400 dark:text-slate-500">Deterministic - no AI in the scoring.</p>
+                  <div className="flex items-center gap-3">
+                    <button onClick={() => fileRef.current?.click()} className="text-xs font-medium text-gray-500 dark:text-slate-400 hover:text-gray-800 dark:hover:text-slate-200">Check another</button>
+                    <button onClick={() => download(`${report.component}-oda-conformance.md`, report.markdown)}
+                      className="text-xs font-medium text-red-600 dark:text-red-400 hover:underline underline-offset-2">Download report (.md)</button>
+                  </div>
+                </div>
+              </div>
+            </div>
           </div>
         )}
       </div>

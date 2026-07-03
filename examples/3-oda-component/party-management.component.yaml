@@ -1,0 +1,32 @@
+# Example ODA Component manifest — Party Management (multi-segment, fully resolvable).
+# Every exposed API resolves to a canonical TM Forum spec in the knowledge base,
+# so the report shows scores + coverage for each function segment.
+apiVersion: oda.tmforum.org/v1
+kind: Component
+metadata:
+  name: partymanagement
+spec:
+  name: partymanagement
+  version: 1.0.0
+  description: Party Management ODA component (example, modelled on TMFC028).
+  coreFunction:
+    exposedAPIs:
+    - name: partyManagement
+      apiType: openapi
+      specification:
+      - url: https://raw.githubusercontent.com/tmforum-apis/TMF632_Party/master/TMF632-Party-v4.0.0.swagger.json
+    dependentAPIs:
+    - name: partyInteraction
+      apiType: openapi
+      specification:
+      - url: https://raw.githubusercontent.com/tmforum-apis/TMF683_PartyInteraction/master/TMF683-PartyInteraction-v4.0.0.swagger.json
+  securityFunction:
+    exposedAPIs:
+    - name: userRolesAndPermissions
+      apiType: openapi
+      specification:
+      - url: https://raw.githubusercontent.com/tmforum-apis/TMF672_UserRolesPermissions/master/TMF672-UserRolePermission-v4.0.0.swagger.json
+    - name: partyRole
+      apiType: openapi
+      specification:
+      - url: https://raw.githubusercontent.com/tmforum-apis/TMF669_PartyRole/master/TMF669-PartyRole-v4.0.0.swagger.json

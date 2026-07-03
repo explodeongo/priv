@@ -174,7 +174,7 @@ It talks to the backend at `http://localhost:8000` (configurable via the `synapt
 - **API Estate X-ray** — a dashboard button in the panel header scans your workspace (or open spec tabs) into the portfolio report.
 - **Local chat history + search**, Fast/Deep toggle, per-answer copy/regenerate.
 
-Try it immediately with the bundled samples in `vscode-extension/examples/` (`product-ordering.broken.yaml` for a single spec, `examples/estate/` for the X-ray) — see `examples/DEMO.md` for a 30-second walkthrough.
+Try it immediately with the repo's use-case samples in [`examples/`](examples/) — `1-single-api-check/product-ordering.broken.yaml` for a single spec, `2-portfolio-xray/` for the X-ray, `3-oda-component/` for ODA components. See [`examples/README.md`](examples/README.md).
 
 ---
 

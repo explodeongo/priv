@@ -23,7 +23,7 @@ except Exception:
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 CANON_641 = os.path.join(HERE, "data", "TMF641_ServiceOrder", "TMF641-Service_Ordering-v4.0.0.swagger.json")
-BROKEN = os.path.join(HERE, "..", "vscode-extension", "examples", "product-ordering.broken.yaml")
+BROKEN = os.path.join(HERE, "..", "examples", "1-single-api-check", "product-ordering.broken.yaml")
 
 # Build the profile index once, synchronously, so profile tests are deterministic.
 tmf_profile.build_index(force=True)
@@ -155,7 +155,7 @@ def test_profile_name_clash_is_not_high_confidence():
 
 # ── API estate X-ray ──────────────────────────────────────────────────────────
 def test_xray_portfolio_rollup():
-    estate = os.path.join(HERE, "..", "vscode-extension", "examples", "estate")
+    estate = os.path.join(HERE, "..", "examples", "2-portfolio-xray")
     items = [{"filename": os.path.basename(f), "content": open(f, encoding="utf-8").read()}
              for f in glob.glob(os.path.join(estate, "*.yaml"))]
     rep = xray.build_portfolio(items)

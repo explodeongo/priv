@@ -64,19 +64,19 @@ The **dashboard button** in the panel header (or *API Estate X-ray* in the palet
 
 ## Install
 
-**From VS Code (no terminal):** ⇧⌘P → **"Extensions: Install from VSIX…"** → pick `synaptdi-0.14.1.vsix` → reload. A **SynaptDI** icon appears in the activity bar.
+**From VS Code (no terminal):** ⇧⌘P → **"Extensions: Install from VSIX…"** → pick `synaptdi-0.15.0.vsix` → reload. A **SynaptDI** icon appears in the activity bar.
 
 **From the terminal:**
 ```bash
-code --install-extension synaptdi-0.14.1.vsix
+code --install-extension synaptdi-0.15.0.vsix
 ```
 
 ## Try it in 30 seconds
-Open the bundled samples (`examples/` in this folder):
-- `product-ordering.broken.yaml` → watch the score, the `vs TMF622` pill, and **Auto-fix**.
-- Open the `examples/estate/` folder → hit the **dashboard** button for the X-ray report.
+Open the repo's samples (`examples/` at the repo root):
+- `examples/1-single-api-check/product-ordering.broken.yaml` → watch the score, the `vs TMF622` pill, and **Auto-fix**.
+- Open the `examples/2-portfolio-xray/` folder → hit the **dashboard** button for the X-ray report.
 
-See `examples/DEMO.md` for the full walkthrough.
+See `examples/README.md` for the full use-case guide.
 
 ## Develop / package
 ```bash

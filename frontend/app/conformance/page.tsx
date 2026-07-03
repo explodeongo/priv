@@ -41,22 +41,6 @@ const tone = (s: number) =>
 
 const covColor = (c: number) => (c >= 80 ? "#16a34a" : c >= 50 ? "#d97706" : "#dc2626");
 
-interface ODAApi { name: string; segment: string; tmf: string; resolved: boolean; score?: number; coverage?: number | null; api?: string; }
-interface ODAComponent {
-  component: string;
-  summary: { component: string; exposed_openapi: number; dependent_openapi: number; scored: number; avg_score: number; all_conformant: boolean };
-  exposed: ODAApi[]; dependent: { name: string; segment: string; tmf: string }[]; markdown: string;
-}
-// Official ODA function-segment colours (the component hexagon).
-const SEG: Record<string, { label: string; color: string }> = {
-  coreFunction:       { label: "Core Function",            color: "#16a34a" },
-  managementFunction: { label: "Management / Operations",  color: "#2563eb" },
-  securityFunction:   { label: "Security",                 color: "#dc2626" },
-  eventNotification:  { label: "Notification / Reporting", color: "#d97706" },
-  notification:       { label: "Notification / Reporting", color: "#d97706" },
-};
-const segInfo = (s: string) => SEG[s] || { label: s.replace(/Function$/, ""), color: "#6b7280" };
-
 function download(name: string, text: string, type = "text/plain") {
   const url = URL.createObjectURL(new Blob([text], { type }));
   const a = document.createElement("a");
@@ -65,10 +49,9 @@ function download(name: string, text: string, type = "text/plain") {
 }
 
 export default function ConformancePage() {
-  const [mode, setMode] = useState<"single" | "portfolio" | "component">("single");
+  const [mode, setMode] = useState<"single" | "portfolio">("single");
   const [report, setReport] = useState<Report | null>(null);
   const [portfolio, setPortfolio] = useState<Portfolio | null>(null);
-  const [oda, setOda] = useState<ODAComponent | null>(null);
   const [openRows, setOpenRows] = useState<Set<number>>(new Set());
   const [specText, setSpecText] = useState("");
   const [loading, setLoading] = useState(false);
@@ -79,15 +62,14 @@ export default function ConformancePage() {
   const [fileName, setFileName] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
   const multiRef = useRef<HTMLInputElement>(null);
-  const compRef = useRef<HTMLInputElement>(null);
   const toast = useToast();
 
-  const reset = () => { setReport(null); setPortfolio(null); setOda(null); setError(""); setFileName(""); setFixed(null); setSpecText(""); };
+  const reset = () => { setReport(null); setPortfolio(null); setError(""); setFileName(""); setFixed(null); setSpecText(""); };
 
-  // Deep-link: /conformance?mode=component|portfolio (used by the ODA Map page).
+  // Deep-link: /conformance?mode=portfolio
   useEffect(() => {
     const m = new URLSearchParams(window.location.search).get("mode");
-    if (m === "component" || m === "portfolio" || m === "single") setMode(m);
+    if (m === "portfolio" || m === "single") setMode(m);
   }, []);
 
   const checkSingle = async (file: File) => {
@@ -152,24 +134,6 @@ export default function ConformancePage() {
     } finally { setLoading(false); }
   };
 
-  const checkComponent = async (file: File) => {
-    setLoading(true); setError(""); setOda(null); setFileName(file.name);
-    try {
-      const content = await file.text();
-      const r = await fetch(`${API}/conformance/component`, {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ content }),
-      });
-      if (!r.ok) { const d = await r.json().catch(() => ({ detail: `HTTP ${r.status}` })); throw new Error(d.detail || `HTTP ${r.status}`); }
-      const data: ODAComponent = await r.json();
-      setOda(data);
-      toast(`${data.component}: ${data.summary.avg_score}/100 avg`, data.summary.all_conformant ? "success" : "warning");
-    } catch (e: any) {
-      const m = e?.message || "Check failed — is the backend running on port 8000?";
-      setError(m); toast(m, "error");
-    } finally { setLoading(false); }
-  };
-
   const sorted = report ? [...report.findings].sort((a, b) => {
     const rank = (f: Finding) => (f.status === "fail" ? (f.severity === "error" ? 0 : 1) : 2);
     return rank(a) - rank(b);
@@ -186,15 +150,15 @@ export default function ConformancePage() {
           <div className="flex items-center gap-3">
             <span className="font-semibold text-gray-800 dark:text-slate-100 text-sm tracking-tight">TMF Conformance &amp; X-ray</span>
             <div className="hidden sm:flex items-center gap-1 bg-gray-100 dark:bg-slate-800 rounded-lg p-0.5 text-xs">
-              {(["single", "portfolio", "component"] as const).map((m) => (
+              {(["single", "portfolio"] as const).map((m) => (
                 <button key={m} onClick={() => { setMode(m); reset(); }}
                   className={`px-2.5 py-1 rounded-md font-medium transition-colors ${mode === m ? "bg-white dark:bg-slate-700 text-gray-900 dark:text-white shadow-sm" : "text-gray-500 dark:text-slate-400"}`}>
-                  {m === "single" ? "Single spec" : m === "portfolio" ? "Portfolio X-ray" : "ODA Component"}
+                  {m === "single" ? "Single spec" : "Portfolio X-ray"}
                 </button>
               ))}
             </div>
           </div>
-          {(report || portfolio || oda) && (
+          {(report || portfolio) && (
             <button onClick={reset}
               className="text-xs text-gray-500 dark:text-slate-400 hover:text-gray-800 dark:hover:text-slate-200 px-3 py-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-slate-800 transition-colors">
               Start over
@@ -206,18 +170,16 @@ export default function ConformancePage() {
           <div className="max-w-3xl mx-auto">
 
             {/* ── Upload ── */}
-            {!report && !portfolio && !oda && (
+            {!report && !portfolio && (
               <div className="flex flex-col items-center">
                 <div className="text-center mb-6">
                   <h2 className="text-xl font-bold text-gray-900 dark:text-white">
-                    {mode === "single" ? "Check your API against TM Forum" : mode === "portfolio" ? "X-ray your whole API estate" : "Check an ODA Component"}
+                    {mode === "single" ? "Check your API against TM Forum" : "X-ray your whole API estate"}
                   </h2>
                   <p className="text-gray-500 dark:text-slate-400 text-sm mt-1.5 max-w-md">
                     {mode === "single"
                       ? "Upload one OpenAPI / Swagger spec for a TMF630 structural score and a coverage check against the real TM Forum API."
-                      : mode === "portfolio"
-                      ? "Select many specs (or a whole folder's worth) for a portfolio report — structural score and TMF coverage per API."
-                      : "Upload an ODA Component manifest (.component.yaml) to score every TM Forum Open API it exposes and depends on."}
+                      : "Select many specs (or a whole folder's worth) for a portfolio report — structural score and TMF coverage per API."}
                   </p>
                 </div>
 
@@ -228,7 +190,7 @@ export default function ConformancePage() {
                     e.preventDefault(); setDragging(false);
                     const files = Array.from(e.dataTransfer.files || []);
                     if (!files.length) return;
-                    if (mode === "single") checkSingle(files[0]); else if (mode === "portfolio") checkPortfolio(files); else checkComponent(files[0]);
+                    if (mode === "single") checkSingle(files[0]); else checkPortfolio(files);
                   }}
                   className={`w-full max-w-xl cursor-pointer rounded-2xl border-2 border-dashed px-6 py-12 text-center transition-all ${
                     dragging ? "border-red-400 bg-red-50 dark:bg-red-500/10"
@@ -238,10 +200,8 @@ export default function ConformancePage() {
                     onChange={(e) => { const f = e.target.files?.[0]; if (f) checkSingle(f); }} />
                   <input ref={multiRef} type="file" accept=".json,.yaml,.yml" multiple className="hidden"
                     onChange={(e) => { const fs = Array.from(e.target.files || []); if (fs.length) checkPortfolio(fs); }} />
-                  <input ref={compRef} type="file" accept=".yaml,.yml,.json" className="hidden"
-                    onChange={(e) => { const f = e.target.files?.[0]; if (f) checkComponent(f); }} />
                   <div
-                    onClick={(e) => { e.preventDefault(); (mode === "single" ? inputRef : mode === "portfolio" ? multiRef : compRef).current?.click(); }}
+                    onClick={(e) => { e.preventDefault(); (mode === "single" ? inputRef : multiRef).current?.click(); }}
                     className={`w-12 h-12 rounded-2xl flex items-center justify-center mx-auto mb-3 transition-colors ${dragging ? "bg-red-100 dark:bg-red-500/20" : "bg-gray-100 dark:bg-slate-800"}`}>
                     {loading ? (
                       <span className="flex gap-1">{[0, 150, 300].map((d) => <span key={d} className="w-2 h-2 rounded-full bg-red-500 animate-bounce" style={{ animationDelay: `${d}ms` }} />)}</span>
@@ -250,10 +210,10 @@ export default function ConformancePage() {
                     )}
                   </div>
                   <p className="text-sm font-medium text-gray-700 dark:text-slate-200"
-                    onClick={(e) => { e.preventDefault(); (mode === "single" ? inputRef : mode === "portfolio" ? multiRef : compRef).current?.click(); }}>
-                    {loading ? `Analysing ${fileName || "specs"}…` : mode === "component" ? "Drop an ODA component.yaml, or click to choose" : mode === "single" ? "Drop your spec here, or click to choose" : "Drop your specs here, or click to choose several"}
+                    onClick={(e) => { e.preventDefault(); (mode === "single" ? inputRef : multiRef).current?.click(); }}>
+                    {loading ? `Analysing ${fileName || "specs"}…` : mode === "single" ? "Drop your spec here, or click to choose" : "Drop your specs here, or click to choose several"}
                   </p>
-                  <p className="text-xs text-gray-400 dark:text-slate-500 mt-1">{mode === "component" ? "ODA Component manifest · YAML" : "OpenAPI 3 or Swagger 2 · JSON or YAML"}</p>
+                  <p className="text-xs text-gray-400 dark:text-slate-500 mt-1">"OpenAPI 3 or Swagger 2 · JSON or YAML"</p>
                 </label>
 
                 {error && <p className="mt-4 text-sm text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-900/50 rounded-xl px-4 py-2.5">{error}</p>}
@@ -486,88 +446,6 @@ export default function ConformancePage() {
               </div>
             )}
 
-            {/* ── ODA Component conformance ── */}
-            {oda && (
-              <div style={{ animation: "fadeUp 0.3s ease-out" }}>
-                <style>{`@keyframes fadeUp { from { opacity:0; transform:translateY(10px);} to {opacity:1; transform:translateY(0);} }`}</style>
-
-                <div className="bg-white dark:bg-slate-900 rounded-2xl border border-gray-200 dark:border-slate-800 shadow-sm p-6 flex items-center gap-6">
-                  <div className="relative flex-shrink-0 w-24 h-24 rounded-full flex items-center justify-center"
-                    style={{ background: `conic-gradient(${covColor(oda.summary.avg_score)} ${oda.summary.avg_score * 3.6}deg, var(--ring-track, #e5e7eb) 0deg)` }}>
-                    <div className="w-[76px] h-[76px] rounded-full bg-white dark:bg-slate-900 flex flex-col items-center justify-center">
-                      <span className="text-2xl font-extrabold" style={{ color: covColor(oda.summary.avg_score) }}>{oda.summary.avg_score}</span>
-                      <span className="text-[10px] text-gray-400 dark:text-slate-500 -mt-0.5">avg / 100</span>
-                    </div>
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <div className="text-xs font-semibold uppercase tracking-wide text-gray-400 dark:text-slate-500">ODA Component</div>
-                    <h2 className="text-lg font-bold text-gray-900 dark:text-slate-100 truncate">{oda.component}</h2>
-                    <div className="flex flex-wrap gap-2 mt-2 text-xs">
-                      <span className={`px-2 py-0.5 rounded-full border ${oda.summary.all_conformant ? "bg-green-50 dark:bg-green-500/10 text-green-700 dark:text-green-400 border-green-200 dark:border-green-500/30" : "bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400 border-amber-200 dark:border-amber-500/30"}`}>
-                        {oda.summary.all_conformant ? "ODA-conformant" : "gaps found"}
-                      </span>
-                      <span className="px-2 py-0.5 rounded-full bg-gray-100 dark:bg-slate-800 text-gray-600 dark:text-slate-300">{oda.summary.exposed_openapi} exposed API{oda.summary.exposed_openapi === 1 ? "" : "s"}</span>
-                      <span className="px-2 py-0.5 rounded-full bg-gray-100 dark:bg-slate-800 text-gray-600 dark:text-slate-300">{oda.summary.dependent_openapi} dependent</span>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="mt-4 space-y-4">
-                  {Array.from(new Set(oda.exposed.map((a) => a.segment))).map((seg) => {
-                    const info = segInfo(seg);
-                    const apis = oda.exposed.filter((a) => a.segment === seg);
-                    return (
-                      <div key={seg}>
-                        <div className="flex items-center gap-2 mb-2">
-                          <span className="w-2.5 h-2.5 rounded-sm" style={{ background: info.color }} />
-                          <span className="text-xs font-semibold uppercase tracking-wide" style={{ color: info.color }}>{info.label}</span>
-                        </div>
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                          {apis.map((a, i) => (
-                            <div key={i} className="bg-white dark:bg-slate-900 rounded-xl border border-gray-200 dark:border-slate-800 shadow-sm p-3.5" style={{ borderLeft: `3px solid ${info.color}` }}>
-                              <div className="flex items-center justify-between gap-2">
-                                <div className="min-w-0">
-                                  <div className="text-sm font-semibold text-gray-900 dark:text-slate-100 truncate">{a.name}</div>
-                                  <div className="text-[11px] text-gray-400 dark:text-slate-500">{a.tmf || "—"}{a.api ? ` · ${a.api}` : ""}</div>
-                                </div>
-                                {typeof a.score === "number"
-                                  ? <span className="text-sm font-bold flex-shrink-0" style={{ color: tone(a.score).ring }}>{a.score}<span className="text-gray-400 text-xs font-normal">/100</span></span>
-                                  : <span className="text-[11px] text-gray-400 flex-shrink-0">spec not found</span>}
-                              </div>
-                              {typeof a.coverage === "number" && (
-                                <div className="mt-2">
-                                  <div className="flex justify-between text-[10px] text-gray-400 mb-0.5"><span>coverage vs canonical</span><span>{a.coverage}%</span></div>
-                                  <div className="h-1.5 rounded-full bg-gray-100 dark:bg-slate-800 overflow-hidden">
-                                    <div className="h-full rounded-full" style={{ width: `${a.coverage}%`, background: covColor(a.coverage) }} />
-                                  </div>
-                                </div>
-                              )}
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-
-                {oda.dependent.length > 0 && (
-                  <div className="mt-4 bg-gray-50 dark:bg-slate-800/40 rounded-xl border border-gray-200 dark:border-slate-800 px-4 py-3">
-                    <div className="text-xs font-semibold text-gray-600 dark:text-slate-300 mb-1.5">Depends on</div>
-                    <div className="flex flex-wrap gap-1.5">
-                      {oda.dependent.map((d, i) => (
-                        <code key={i} className="text-[11px] font-mono bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 text-gray-600 dark:text-slate-300 rounded px-1.5 py-0.5">{d.name} ({d.tmf || "?"})</code>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                <div className="flex items-center justify-between mt-5">
-                  <p className="text-xs text-gray-400 dark:text-slate-500">Each exposed Open API scored deterministically against TM Forum — no AI.</p>
-                  <button onClick={() => download(`${oda.component}-oda-conformance.md`, oda.markdown, "text/markdown")}
-                    className="text-xs font-medium text-red-600 dark:text-red-400 hover:underline underline-offset-2">Download report (.md)</button>
-                </div>
-              </div>
-            )}
           </div>
         </main>
       </div>

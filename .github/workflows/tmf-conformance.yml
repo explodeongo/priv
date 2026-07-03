@@ -18,5 +18,5 @@ jobs:
         with:
           # Point this at your own spec directory (e.g. "apis" or "specs/**/*.yaml").
           # Here we gate this repo's compliant reference spec so the check stays green.
-          path: vscode-extension/examples/product-ordering.tmf.yaml
+          path: examples/1-single-api-check/product-ordering.compliant.yaml
           min: "90"

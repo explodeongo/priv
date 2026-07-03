@@ -1,0 +1,27 @@
+# Example ODA Component manifest — a realistic MIXED case.
+# One exposed API is a standard TMF API (resolves + gets scored); the other is the
+# vendor's own custom API (not in the knowledge base) — the report honestly marks it
+# "spec not found" instead of guessing. Use this to see how your own components look.
+apiVersion: oda.tmforum.org/v1
+kind: Component
+metadata:
+  name: acme-inventory-plus
+spec:
+  name: acme-inventory-plus
+  version: 0.3.0
+  description: ACME's inventory component — standard TMF637 plus a proprietary loyalty API.
+  coreFunction:
+    exposedAPIs:
+    - name: productInventoryManagement
+      apiType: openapi
+      specification:
+      - url: https://raw.githubusercontent.com/tmforum-apis/TMF637_ProductInventory/master/TMF637-ProductInventory-v4.0.0.swagger.json
+    - name: acmeLoyaltyScore
+      apiType: openapi
+      specification:
+      - url: https://api.acme.example/specs/loyalty-v1.yaml
+    dependentAPIs:
+    - name: party
+      apiType: openapi
+      specification:
+      - url: https://raw.githubusercontent.com/tmforum-apis/TMF632_Party/master/TMF632-Party-v4.0.0.swagger.json

@@ -1,0 +1,18 @@
+# Drop this into YOUR repo as .github/workflows/tmf-conformance.yml to gate every
+# pull request on TM Forum (TMF630) conformance. Point `path` at your spec folder.
+name: TMF conformance
+
+on:
+  pull_request:
+    paths: ["**/*.yaml", "**/*.yml", "**/*.json"]
+
+jobs:
+  conformance:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Gate specs against TM Forum (TMF630)
+        uses: dibuAI/SynaptDI@main        # or pin a tag once released
+        with:
+          path: ./apis                    # ← your spec directory (or a glob / single file)
+          min: "90"                       # fail the PR if any spec scores below this

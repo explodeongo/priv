@@ -1,7 +1,7 @@
 # ─────────────────────────────────────────────────────────────────────────────
 # Example ODA Component manifest — for SynaptDI's ODA Component conformance.
-# Web app → Conformance → "ODA Component" tab → drop this file.
-# CLI:  cd backend && python oda.py ../vscode-extension/examples/product-inventory.component.yaml
+# Web app → ODA Map → Validate a component → drop this file.
+# CLI:  cd backend && python oda.py ../examples/3-oda-component/product-inventory.component.yaml
 # It scores every TM Forum Open API this component exposes + lists what it depends on.
 # ─────────────────────────────────────────────────────────────────────────────
 apiVersion: oda.tmforum.org/v1
