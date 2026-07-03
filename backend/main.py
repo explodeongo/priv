@@ -32,6 +32,7 @@ import conformance   # TMF630 conformance rule engine
 import tmf_profile   # profile-aware conformance (diff vs canonical TMF specs)
 import xray          # API estate X-ray (portfolio roll-up)
 import oda           # ODA Component conformance
+import spec_facts    # deterministic answers for structured spec-fact questions
 from vectorstore import get_store, reset_store   # backend-agnostic vector store (Chroma today)
 
 _chroma_lock = threading.Lock()   # protects singleton + upsert/query overlap
@@ -1219,6 +1220,20 @@ def query(req: QueryRequest, authorization: Optional[str] = Header(None)):
                                  latency_ms=int((time.time()-start)*1000),
                                  chunks_retrieved=0, cached=True, confidence=hit.get("confidence", {}))
 
+    # Deterministic spec-fact short-circuit: structured questions ("what mandatory
+    # fields does TMF622 Product Order require?") are answered straight from the
+    # canonical schema — correct by construction, never the LLM's interpretation.
+    if scope in ("all", "kb"):
+        fact = spec_facts.answer(req.question)
+        if fact:
+            _log_query(req.question, True, who)
+            conf = {"level": "high", "score": 100, "strong": 1}
+            if not req.history and not req.no_cache:
+                cache_put(req.question, scope, mode, fact["answer"], fact["sources"], conf)
+            return QueryResponse(answer=fact["answer"], sources=fact["sources"],
+                                 latency_ms=int((time.time() - start) * 1000),
+                                 chunks_retrieved=1, confidence=conf)
+
     rq = _retrieval_query(req.question, req.history)
     try:    q_emb = embed_query(rq)
     except Exception as e: raise HTTPException(503, f"Embedding failed: {e}")
@@ -1283,6 +1298,24 @@ def query_stream(req: QueryRequest, authorization: Optional[str] = Header(None))
                                   "latency_ms": int((time.time() - start) * 1000),
                                   "chunks_retrieved": 0}) + "\n"
             return StreamingResponse(cached_gen(), media_type="application/x-ndjson")
+
+    # Deterministic spec-fact short-circuit (see /query) — stream the exact answer.
+    if scope in ("all", "kb"):
+        fact = spec_facts.answer(req.question)
+        if fact:
+            conf = {"level": "high", "score": 100, "strong": 1}
+            if not req.history and not req.no_cache:
+                cache_put(req.question, scope, mode, fact["answer"], fact["sources"], conf)
+            def fact_gen():
+                _log_query(req.question, True, who)
+                yield json.dumps({"type": "context", "sources": fact["sources"],
+                                  "specs": [fact["tmf"]] if fact.get("tmf") else [],
+                                  "confidence": conf}) + "\n"
+                yield json.dumps({"type": "token", "text": fact["answer"]}) + "\n"
+                yield json.dumps({"type": "done", "sources": fact["sources"], "confidence": conf,
+                                  "latency_ms": int((time.time() - start) * 1000),
+                                  "chunks_retrieved": 1}) + "\n"
+            return StreamingResponse(fact_gen(), media_type="application/x-ndjson")
 
     rq = _retrieval_query(req.question, req.history)
     try:    q_emb = embed_query(rq)

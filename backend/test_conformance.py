@@ -240,6 +240,27 @@ spec:
     assert "ODA Component conformance" in oda.render_markdown(r)
 
 
+def test_spec_facts_required_fields():
+    """The deterministic answerer must read required fields straight from the spec —
+    locking in the fix for the RAG chat that hallucinated 'productOffering' as required
+    and mislabeled 'id' on the wrong schema."""
+    import spec_facts, tmf_profile
+    tmf_profile.build_index()
+    r = spec_facts.answer("What mandatory fields does TMF622 Product Order require?")
+    assert r, "should answer deterministically"
+    a = r["answer"]
+    assert "productOrderItem" in a                 # the real required field
+    assert "action" in a and "id" in a             # the item's real required fields (expanded)
+    assert "productOffering" not in a              # the original LLM hallucination must not appear
+    assert r["tmf"] == "TMF622"
+    # A different API resolves independently and correctly.
+    s = spec_facts.answer("required fields for TMF641 service order")
+    assert s and "serviceOrderItem" in s["answer"]
+    # Conceptual questions are NOT owned here — they defer to the LLM.
+    assert spec_facts.answer("what is TMF622 used for") is None
+    assert spec_facts.answer("how does pagination work") is None
+
+
 def test_oda_catalog():
     import oda
     c = oda.catalog()
