@@ -261,6 +261,47 @@ def test_spec_facts_required_fields():
     assert spec_facts.answer("how does pagination work") is None
 
 
+def test_spec_facts_oda_component():
+    """ODA 'which component handles X' must be answered from OFFICIAL DATA only — the
+    component list + each component's declared TMF APIs + canonical spec titles. No
+    synonym tables, no invented names (the 'Trouble Ticket Management System /
+    Customer Journey Management' hallucination)."""
+    import re, spec_facts, tmf_profile
+    tmf_profile.build_index()
+    assert not hasattr(spec_facts, "_ODA_CONCEPT")          # the hardcoded synonym map is gone
+
+    # 'trouble tickets' resolves via the canonical TMF621 title, and reports what the
+    # official map actually says: nobody exposes it; TMFC050 depends on it.
+    r = spec_facts.answer("Which ODA component handles trouble tickets?")
+    assert r, "should answer deterministically"
+    a = r["answer"]
+    assert "TMF621" in a
+    assert "no component exposes" in a.lower()
+    assert "TMFC050" in a                                    # dependent per official spec
+    assert "Trouble Ticket Management System" not in a       # fabricated name must not appear
+    assert "Customer Journey Management" not in a            # fabricated domain must not appear
+
+    # API-title path: alarms → TMF642 → its real exposers include Fault Management.
+    r2 = spec_facts.answer("which component handles alarms?")
+    assert r2 and "TMF642" in r2["answer"] and "TMFC043" in r2["answer"]
+
+    # Name path still exact.
+    r3 = spec_facts.answer("what ODA component is responsible for product catalog?")
+    assert r3 and "TMFC001" in r3["answer"]
+
+    # Nonsense must refuse — and may only ever mention codes from the real catalog.
+    n = spec_facts.answer("which ODA component handles quantum teleportation?")
+    assert n and "won't guess" in n["answer"].lower()
+    import oda
+    real = {c["code"] for c in oda.catalog()["components"]}
+    assert set(re.findall(r"TMFC\d{3}", n["answer"])) <= real
+
+    # The LLM fallback grounding pins the model to the real list.
+    g = spec_facts.oda_grounding("tell me about ODA components for billing")
+    assert "TMFC001" in g and "Never invent" in g
+    assert spec_facts.oda_grounding("how does pagination work") == ""
+
+
 def test_oda_catalog():
     import oda
     c = oda.catalog()
@@ -268,6 +309,11 @@ def test_oda_catalog():
     assert len(codes) == 35 and len(set(codes)) == 35, len(codes)          # full official map, no dupes
     assert set(x["block"] for x in c["components"]) <= set(c["blocks"])    # every block labelled
     assert all(x["spec_url"].startswith("https://") for x in c["components"])
+    # Every component now carries its official exposed-API list (from TM Forum's specs).
+    enriched = [x for x in c["components"] if x.get("exposed")]
+    assert len(enriched) == 35, f"only {len(enriched)}/35 enriched from official data"
+    tmfc043 = next(x for x in c["components"] if x["code"] == "TMFC043")
+    assert {"TMF642", "TMF656"} <= {a["tmf"] for a in tmfc043["exposed"]}
 
 
 if __name__ == "__main__":

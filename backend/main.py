@@ -309,7 +309,21 @@ def optional_user_email(authorization: Optional[str]) -> str:
         return ""
 
 # ── App ────────────────────────────────────────────────────────────────────────
-app = FastAPI(title="SynaptDI API", version="2.0.0")
+app = FastAPI(
+    title="SynaptDI API",
+    version="2.0.0",
+    description=(
+        "Deterministic **TM Forum conformance** & knowledge engine — validated against "
+        "**169 official TMF specs** (avg 99.9/100). Score any OpenAPI / Swagger spec against "
+        "TMF630, diff it against the canonical API, complete it, and validate ODA Components — "
+        "with **no LLM in the scoring**."
+    ),
+    openapi_tags=[
+        {"name": "Conformance", "description": "Score, profile, fix, scaffold and X-ray specs against the TM Forum standard."},
+        {"name": "ODA", "description": "ODA Component conformance and the official component map."},
+        {"name": "Knowledge", "description": "Grounded TM Forum Q&A over the indexed spec corpus."},
+    ],
+)
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 def _warm_models():
@@ -1196,7 +1210,7 @@ def stream_ollama(prompt: str, model: str = "", num_predict: int = DEEP_NUM_PRED
     finally:
         _llm_sem.release()
 
-@app.post("/query", response_model=QueryResponse)
+@app.post("/query", response_model=QueryResponse, tags=["Knowledge"])
 def query(req: QueryRequest, authorization: Optional[str] = Header(None)):
     who = optional_user_email(authorization)
     if not req.question.strip():
@@ -1252,7 +1266,7 @@ def query(req: QueryRequest, authorization: Optional[str] = Header(None)):
         return QueryResponse(answer=empty, sources=[],
                              latency_ms=int((time.time()-start)*1000), chunks_retrieved=0)
 
-    extra = _project_extra(req.project_instructions) + extra
+    extra = _project_extra(req.project_instructions) + extra + spec_facts.oda_grounding(req.question)
     try:    answer = generate_answer(build_prompt(req.question, chunks, guarded=not confident, history=req.history, extra=extra), model, npred)
     except Exception as e: raise HTTPException(503, f"Generation failed: {e}")
 
@@ -1272,7 +1286,7 @@ def query(req: QueryRequest, authorization: Optional[str] = Header(None)):
 
 
 # ── Query (streaming, token-by-token) ────────────────────────────────────────
-@app.post("/query/stream")
+@app.post("/query/stream", tags=["Knowledge"])
 def query_stream(req: QueryRequest, authorization: Optional[str] = Header(None)):
     who = optional_user_email(authorization)
     if not req.question.strip():
@@ -1327,7 +1341,7 @@ def query_stream(req: QueryRequest, authorization: Optional[str] = Header(None))
         confident, empty = True, ""
     else:
         chunks, confident, empty = retrieve(rq, q_emb, top_k, scope)
-    extra = _project_extra(req.project_instructions) + extra
+    extra = _project_extra(req.project_instructions) + extra + spec_facts.oda_grounding(req.question)
 
     def gen():
         if not chunks:
@@ -1399,7 +1413,7 @@ def followups(req: FollowupReq):
     return {"questions": generate_followups(req.question, req.answer)}
 
 # ── TMF630 conformance checker ───────────────────────────────────────────────────
-@app.post("/conformance")
+@app.post("/conformance", tags=["Conformance"])
 async def conformance_check(file: UploadFile = File(...)):
     """Upload an OpenAPI/Swagger spec → get a TMF630 conformance report (score + findings)."""
     raw  = await file.read()
@@ -1425,7 +1439,7 @@ class ConformanceTextReq(BaseModel):
     content: str
     filename: str = ""
 
-@app.post("/conformance/text")
+@app.post("/conformance/text", tags=["Conformance"])
 def conformance_check_text(req: ConformanceTextReq):
     """Same TMF630 check as /conformance but from a JSON body — used by the VS Code
     extension to validate the active editor's spec without a multipart upload."""
@@ -1454,7 +1468,7 @@ def conformance_check_text(req: ConformanceTextReq):
     return report
 
 
-@app.post("/conformance/profile")
+@app.post("/conformance/profile", tags=["Conformance"])
 def conformance_profile(req: ConformanceTextReq):
     """Detect which TMF API a spec is and diff it against the canonical TMF spec
     (deterministic, no LLM). Powers the 'vs TMFxxx reference' coverage signal."""
@@ -1478,7 +1492,7 @@ def conformance_profile(req: ConformanceTextReq):
 class PortfolioReq(BaseModel):
     specs: list = []     # [{filename, content}, …]
 
-@app.post("/conformance/portfolio")
+@app.post("/conformance/portfolio", tags=["Conformance"])
 def conformance_portfolio(req: PortfolioReq):
     """API estate X-ray: structural + profile conformance across many specs, rolled up
     into a board-ready report (markdown included). Deterministic, no LLM."""
@@ -1491,7 +1505,7 @@ class ConformanceFixReq(BaseModel):
     content: str
     ids: Optional[list] = None     # specific rule ids to fix; None → fix all fixable
 
-@app.post("/conformance/fix")
+@app.post("/conformance/fix", tags=["Conformance"])
 def conformance_fix(req: ConformanceFixReq):
     """Deterministically auto-fix TMF630 violations in a spec (no LLM) and return the
     corrected spec in its original format, plus the re-checked score."""
@@ -1516,7 +1530,7 @@ def conformance_fix(req: ConformanceFixReq):
     return {"content": out, "fixed": fixed, "format": fmt,
             "score": report["score"], "summary": report["summary"]}
 
-@app.post("/conformance/scaffold")
+@app.post("/conformance/scaffold", tags=["Conformance"])
 def conformance_scaffold(req: ConformanceFixReq):
     """Complete a partial spec by merging the MISSING operations + resource attributes
     (and their schemas) from the detected canonical TMF spec — deterministic, no LLM.
@@ -1547,7 +1561,7 @@ def conformance_scaffold(req: ConformanceFixReq):
     return {"content": out, "format": fmt, "detected": res["detected"], "added": res["added"],
             "coverage_before": res["coverage_before"], "coverage_after": res["coverage_after"]}
 
-@app.post("/conformance/component")
+@app.post("/conformance/component", tags=["ODA"])
 def conformance_component(req: ConformanceFixReq):
     """ODA Component conformance: parse an ODA Component manifest (.component.yaml) and
     score each TM Forum Open API it exposes/depends on. Deterministic, no LLM."""
@@ -1560,7 +1574,7 @@ def conformance_component(req: ConformanceFixReq):
     rep["markdown"] = oda.render_markdown(rep)
     return rep
 
-@app.get("/oda/components")
+@app.get("/oda/components", tags=["ODA"])
 def oda_components():
     """The official ODA component map (TM Forum v1.0.0 — 35 components in 6 functional
     blocks), enriched with exposed/dependent APIs where reference manifests exist."""

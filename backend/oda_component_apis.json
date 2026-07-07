@@ -1,0 +1,2336 @@
+{
+ "source": "Official ODA Component specifications \u2014 github.com/tmforum-rand/TMForum-ODA-Ready-for-publication v1.0.0 (Specification/*.yaml per component)",
+ "fetched": "2026-07-07",
+ "components": {
+  "TMFC001": {
+   "exposed": [
+    {
+     "tmf": "TMF620",
+     "name": "product-catalog-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF701",
+     "name": "process-flow-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF671",
+     "name": "promotion-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "EXPOSEDAPI_ID",
+     "name": "metrics",
+     "segment": "managementFunction"
+    },
+    {
+     "tmf": "TMF669",
+     "name": "party-role-management-api",
+     "segment": "securityFunction"
+    }
+   ],
+   "dependent": [
+    {
+     "tmf": "TMF633",
+     "name": "service-catalog-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF669",
+     "name": "party-role-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF632",
+     "name": "party-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF634",
+     "name": "resource-catalog-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF651",
+     "name": "agreement-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF673",
+     "name": "geographic-address-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF674",
+     "name": "geographic-site-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF675",
+     "name": "geographic-location-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF662",
+     "name": "entity-catalog-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF620",
+     "name": "product-catalog-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "DEPENDENTAPI_ID",
+     "name": "dependentAPI_name",
+     "segment": "managementFunction"
+    }
+   ]
+  },
+  "TMFC002": {
+   "exposed": [
+    {
+     "tmf": "TMF648",
+     "name": "quote-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF663",
+     "name": "shopping-cart-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF701",
+     "name": "process-flow-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "EXPOSEDAPI_ID",
+     "name": "metrics",
+     "segment": "managementFunction"
+    },
+    {
+     "tmf": "TMF669",
+     "name": "party-role-management-api",
+     "segment": "securityFunction"
+    }
+   ],
+   "dependent": [
+    {
+     "tmf": "TMF620",
+     "name": "product-catalog-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF637",
+     "name": "product-inventory-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF679",
+     "name": "product-offering-qualification-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF646",
+     "name": "appointment-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF673",
+     "name": "geographic-address-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF674",
+     "name": "geographic-site-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF716",
+     "name": "resource-reservation",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF687",
+     "name": "stock-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF632",
+     "name": "party-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF669",
+     "name": "party-role-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF666",
+     "name": "account-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF676",
+     "name": "payment-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF683",
+     "name": "party-interaction-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF638",
+     "name": "service-inventory-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF639",
+     "name": "resource-inventory-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF701",
+     "name": "process-flow-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF760",
+     "name": "product-configuration-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF651",
+     "name": "agreement-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "DEPENDENTAPI_ID",
+     "name": "dependentAPI_name",
+     "segment": "managementFunction"
+    }
+   ]
+  },
+  "TMFC003": {
+   "exposed": [
+    {
+     "tmf": "TMF622",
+     "name": "product-ordering-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF701",
+     "name": "process-flow-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "EXPOSEDAPI_ID",
+     "name": "metrics",
+     "segment": "managementFunction"
+    },
+    {
+     "tmf": "TMF669",
+     "name": "party-role-management-api",
+     "segment": "securityFunction"
+    }
+   ],
+   "dependent": [
+    {
+     "tmf": "TMF620",
+     "name": "product-catalog-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF622",
+     "name": "product-ordering-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF637",
+     "name": "product-inventory-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF633",
+     "name": "service-catalog-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF638",
+     "name": "service-inventory-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF641",
+     "name": "service-ordering-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF634",
+     "name": "resource-catalog-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF639",
+     "name": "resource-inventory-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF652",
+     "name": "resource-order-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF701",
+     "name": "process-flow-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "DEPENDENTAPI_ID",
+     "name": "dependentAPI_name",
+     "segment": "managementFunction"
+    }
+   ]
+  },
+  "TMFC005": {
+   "exposed": [
+    {
+     "tmf": "TMF637",
+     "name": "product-inventory-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF701",
+     "name": "process-flow-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "EXPOSEDAPI_ID",
+     "name": "metrics",
+     "segment": "managementFunction"
+    },
+    {
+     "tmf": "TMF669",
+     "name": "party-role-management-api",
+     "segment": "securityFunction"
+    }
+   ],
+   "dependent": [
+    {
+     "tmf": "TMF620",
+     "name": "product-catalog-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF669",
+     "name": "party-role-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF639",
+     "name": "resource-inventory-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF651",
+     "name": "agreement-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF673",
+     "name": "geographic-address-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF674",
+     "name": "geographic-site-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF675",
+     "name": "geographic-location-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF666",
+     "name": "account-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF632",
+     "name": "party-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF637",
+     "name": "product-inventory-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF638",
+     "name": "service-inventory-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF622",
+     "name": "product-ordering-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "DEPENDENTAPI_ID",
+     "name": "dependentAPI_name",
+     "segment": "managementFunction"
+    }
+   ]
+  },
+  "TMFC006": {
+   "exposed": [
+    {
+     "tmf": "TMF633",
+     "name": "service-catalog-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF657",
+     "name": "service-quality-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF701",
+     "name": "process-flow-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "EXPOSEDAPI_ID",
+     "name": "metrics",
+     "segment": "managementFunction"
+    },
+    {
+     "tmf": "TMF669",
+     "name": "party-role-management-api",
+     "segment": "securityFunction"
+    }
+   ],
+   "dependent": [
+    {
+     "tmf": "TMF634",
+     "name": "resource-catalog-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF669",
+     "name": "party-role-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF632",
+     "name": "party-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF662",
+     "name": "entity-catalog-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "DEPENDENTAPI_ID",
+     "name": "dependentAPI_name",
+     "segment": "managementFunction"
+    }
+   ]
+  },
+  "TMFC007": {
+   "exposed": [
+    {
+     "tmf": "TMF641",
+     "name": "service-ordering-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF701",
+     "name": "process-flow-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "EXPOSEDAPI_ID",
+     "name": "metrics",
+     "segment": "managementFunction"
+    },
+    {
+     "tmf": "TMF669",
+     "name": "party-role-management-api",
+     "segment": "securityFunction"
+    }
+   ],
+   "dependent": [
+    {
+     "tmf": "TMF632",
+     "name": "party-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF633",
+     "name": "service-catalog-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF634",
+     "name": "resource-catalog-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF638",
+     "name": "service-inventory-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF639",
+     "name": "resource-inventory-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF640",
+     "name": "service-activation-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF641",
+     "name": "service-ordering-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF645",
+     "name": "service-qualification-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF646",
+     "name": "appointment-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF652",
+     "name": "resource-order-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF653",
+     "name": "service-test-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF669",
+     "name": "party-role-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF673",
+     "name": "geographic-address-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF674",
+     "name": "geographic-site-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF675",
+     "name": "geographic-location-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF681",
+     "name": "communication-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF697",
+     "name": "work-order-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF701",
+     "name": "process-flow-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "DEPENDENTAPI_ID",
+     "name": "dependentAPI_name",
+     "segment": "managementFunction"
+    }
+   ]
+  },
+  "TMFC008": {
+   "exposed": [
+    {
+     "tmf": "TMF638",
+     "name": "service-inventory-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF701",
+     "name": "process-flow-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "EXPOSEDAPI_ID",
+     "name": "metrics",
+     "segment": "managementFunction"
+    },
+    {
+     "tmf": "TMF669",
+     "name": "party-role-management-api",
+     "segment": "securityFunction"
+    }
+   ],
+   "dependent": [
+    {
+     "tmf": "TMF633",
+     "name": "service-catalog-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF669",
+     "name": "party-role-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF639",
+     "name": "resource-inventory-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF638",
+     "name": "service-inventory-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF673",
+     "name": "geographic-address-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF674",
+     "name": "geographic-site-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF675",
+     "name": "geographic-location-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF641",
+     "name": "service-ordering-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF632",
+     "name": "party-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "DEPENDENTAPI_ID",
+     "name": "dependentAPI_name",
+     "segment": "managementFunction"
+    }
+   ]
+  },
+  "TMFC009": {
+   "exposed": [
+    {
+     "tmf": "TMF645",
+     "name": "service-qualification-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "EXPOSEDAPI_ID",
+     "name": "metrics",
+     "segment": "managementFunction"
+    },
+    {
+     "tmf": "TMF669",
+     "name": "party-role-management-api",
+     "segment": "securityFunction"
+    }
+   ],
+   "dependent": [
+    {
+     "tmf": "TMF633",
+     "name": "service-catalog-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF638",
+     "name": "service-inventory-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF634",
+     "name": "resource-catalog-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF639",
+     "name": "resource-inventory-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF632",
+     "name": "party-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF669",
+     "name": "party-role-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF673",
+     "name": "geographic-address-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF674",
+     "name": "geographic-site-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF675",
+     "name": "geographic-location-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "DEPENDENTAPI_ID",
+     "name": "dependentAPI_name",
+     "segment": "managementFunction"
+    }
+   ]
+  },
+  "TMFC010": {
+   "exposed": [
+    {
+     "tmf": "TMF634",
+     "name": "resource-catalog-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF701",
+     "name": "process-flow-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "EXPOSEDAPI_ID",
+     "name": "metrics",
+     "segment": "managementFunction"
+    },
+    {
+     "tmf": "TMF669",
+     "name": "party-role-management-api",
+     "segment": "securityFunction"
+    }
+   ],
+   "dependent": [
+    {
+     "tmf": "TMF634",
+     "name": "resource-catalog-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF669",
+     "name": "party-role-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF632",
+     "name": "party-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF662",
+     "name": "entity-catalog-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "DEPENDENTAPI_ID",
+     "name": "dependentAPI_name",
+     "segment": "managementFunction"
+    }
+   ]
+  },
+  "TMFC011": {
+   "exposed": [
+    {
+     "tmf": "TMF652",
+     "name": "resource-order-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF701",
+     "name": "process-flow-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "EXPOSEDAPI_ID",
+     "name": "metrics",
+     "segment": "managementFunction"
+    },
+    {
+     "tmf": "TMF669",
+     "name": "party-role-management-api",
+     "segment": "securityFunction"
+    }
+   ],
+   "dependent": [
+    {
+     "tmf": "TMF702",
+     "name": "resource-activation-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF685",
+     "name": "resource-pool-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF634",
+     "name": "resource-catalog-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF639",
+     "name": "resource-inventory-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF664",
+     "name": "resource-function-activation-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF632",
+     "name": "party-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF646",
+     "name": "appointment-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF673",
+     "name": "geographic-address-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF674",
+     "name": "geographic-site-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF675",
+     "name": "geographic-location-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "DEPENDENTAPI_ID",
+     "name": "dependentAPI_name",
+     "segment": "managementFunction"
+    }
+   ]
+  },
+  "TMFC012": {
+   "exposed": [
+    {
+     "tmf": "TMF639",
+     "name": "resource-inventory-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF701",
+     "name": "process-flow-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF685",
+     "name": "resource-pool-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF716",
+     "name": "resource-reservation",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "EXPOSEDAPI_ID",
+     "name": "metrics",
+     "segment": "managementFunction"
+    },
+    {
+     "tmf": "TMF669",
+     "name": "party-role-management-api",
+     "segment": "securityFunction"
+    }
+   ],
+   "dependent": [
+    {
+     "tmf": "TMF634",
+     "name": "resource-catalog-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF669",
+     "name": "party-role-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF632",
+     "name": "party-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF673",
+     "name": "geographic-address-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF674",
+     "name": "geographic-site-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF675",
+     "name": "geographic-location-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF639",
+     "name": "resource-inventory-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "DEPENDENTAPI_ID",
+     "name": "dependentAPI_name",
+     "segment": "managementFunction"
+    }
+   ]
+  },
+  "TMFC014": {
+   "exposed": [
+    {
+     "tmf": "TMF673",
+     "name": "geographic-address-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF674",
+     "name": "geographic-site-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF675",
+     "name": "geographic-location-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF701",
+     "name": "process-flow-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "EXPOSEDAPI_ID",
+     "name": "metrics",
+     "segment": "managementFunction"
+    },
+    {
+     "tmf": "TMF669",
+     "name": "party-role-management-api",
+     "segment": "securityFunction"
+    }
+   ],
+   "dependent": [
+    {
+     "tmf": "DEPENDENTAPI_ID",
+     "name": "dependentAPI_name",
+     "segment": "managementFunction"
+    }
+   ]
+  },
+  "TMFC020": {
+   "exposed": [
+    {
+     "tmf": "TMF720",
+     "name": "digital-identity-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF701",
+     "name": "process-flow-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "EXPOSEDAPI_ID",
+     "name": "metrics",
+     "segment": "managementFunction"
+    },
+    {
+     "tmf": "TMF669",
+     "name": "party-role-management-api",
+     "segment": "securityFunction"
+    }
+   ],
+   "dependent": [
+    {
+     "tmf": "TMF632",
+     "name": "party-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF669",
+     "name": "party-role-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF701",
+     "name": "process-flow-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "DEPENDENTAPI_ID",
+     "name": "dependentAPI_name",
+     "segment": "managementFunction"
+    }
+   ]
+  },
+  "TMFC022": {
+   "exposed": [
+    {
+     "tmf": "TMF644",
+     "name": "privacy-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF701",
+     "name": "process-flow-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "EXPOSEDAPI_ID",
+     "name": "metrics",
+     "segment": "managementFunction"
+    },
+    {
+     "tmf": "TMF669",
+     "name": "party-role-management-api",
+     "segment": "securityFunction"
+    }
+   ],
+   "dependent": [
+    {
+     "tmf": "TMF620",
+     "name": "product-catalog-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF632",
+     "name": "party-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF667",
+     "name": "document-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF669",
+     "name": "party-role-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "DEPENDENTAPI_ID",
+     "name": "dependentAPI_name",
+     "segment": "managementFunction"
+    }
+   ]
+  },
+  "TMFC023": {
+   "exposed": [
+    {
+     "tmf": "TMF683",
+     "name": "party-interaction-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF701",
+     "name": "process-flow-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "EXPOSEDAPI_ID",
+     "name": "metrics",
+     "segment": "managementFunction"
+    },
+    {
+     "tmf": "TMF669",
+     "name": "party-role-management-api",
+     "segment": "securityFunction"
+    }
+   ],
+   "dependent": [
+    {
+     "tmf": "TMF632",
+     "name": "party-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF669",
+     "name": "party-role-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF662",
+     "name": "entity-catalog-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF667",
+     "name": "document-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF681",
+     "name": "communication-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF701",
+     "name": "process-flow-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "DEPENDENTAPI_ID",
+     "name": "dependentAPI_name",
+     "segment": "managementFunction"
+    }
+   ]
+  },
+  "TMFC024": {
+   "exposed": [
+    {
+     "tmf": "TMF666",
+     "name": "account-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF701",
+     "name": "process-flow-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "EXPOSEDAPI_ID",
+     "name": "metrics",
+     "segment": "managementFunction"
+    },
+    {
+     "tmf": "TMF669",
+     "name": "party-role-management-api",
+     "segment": "securityFunction"
+    }
+   ],
+   "dependent": [
+    {
+     "tmf": "TMF632",
+     "name": "party-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF669",
+     "name": "party-role-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF670",
+     "name": "payment-method-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF676",
+     "name": "payment-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF701",
+     "name": "process-flow-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "DEPENDENTAPI_ID",
+     "name": "dependentAPI_name",
+     "segment": "managementFunction"
+    }
+   ]
+  },
+  "TMFC027": {
+   "exposed": [
+    {
+     "tmf": "TMF679",
+     "name": "product-offering-qualification-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF760",
+     "name": "product-configuration-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF701",
+     "name": "process-flow-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "EXPOSEDAPI_ID",
+     "name": "metrics",
+     "segment": "managementFunction"
+    },
+    {
+     "tmf": "TMF669",
+     "name": "party-role-management-api",
+     "segment": "securityFunction"
+    }
+   ],
+   "dependent": [
+    {
+     "tmf": "TMF637",
+     "name": "product-inventory-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF620",
+     "name": "product-catalog-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF622",
+     "name": "product-ordering-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF632",
+     "name": "party-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF666",
+     "name": "account-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF669",
+     "name": "party-role-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF673",
+     "name": "geographic-address-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF674",
+     "name": "geographic-site-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF701",
+     "name": "process-flow-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF662",
+     "name": "entity-catalog-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF921",
+     "name": "intent-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF645",
+     "name": "service-qualification-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF651",
+     "name": "agreement-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "DEPENDENTAPI_ID",
+     "name": "dependentAPI_name",
+     "segment": "managementFunction"
+    }
+   ]
+  },
+  "TMFC028": {
+   "exposed": [
+    {
+     "tmf": "TMF632",
+     "name": "party-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF701",
+     "name": "process-flow-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "EXPOSEDAPI_ID",
+     "name": "metrics",
+     "segment": "managementFunction"
+    },
+    {
+     "tmf": "TMF669",
+     "name": "party-role-management-api",
+     "segment": "securityFunction"
+    }
+   ],
+   "dependent": [
+    {
+     "tmf": "TMF669",
+     "name": "party-role-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF673",
+     "name": "geographic-address-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF674",
+     "name": "geographic-site-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF675",
+     "name": "geographic-location-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF701",
+     "name": "process-flow-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF688",
+     "name": "event-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "DEPENDENTAPI_ID",
+     "name": "dependentAPI_name",
+     "segment": "managementFunction"
+    }
+   ]
+  },
+  "TMFC029": {
+   "exposed": [
+    {
+     "tmf": "TMF670",
+     "name": "payment-method-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF676",
+     "name": "payment-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF701",
+     "name": "process-flow-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "EXPOSEDAPI_ID",
+     "name": "metrics",
+     "segment": "managementFunction"
+    },
+    {
+     "tmf": "TMF669",
+     "name": "party-role-management-api",
+     "segment": "securityFunction"
+    }
+   ],
+   "dependent": [
+    {
+     "tmf": "TMF632",
+     "name": "party-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF666",
+     "name": "account-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF673",
+     "name": "geographic-address-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF674",
+     "name": "geographic-site-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF675",
+     "name": "geographic-location-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "DEPENDENTAPI_ID",
+     "name": "dependentAPI_name",
+     "segment": "managementFunction"
+    }
+   ]
+  },
+  "TMFC030": {
+   "exposed": [
+    {
+     "tmf": "TMF678",
+     "name": "customer-bill-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF701",
+     "name": "process-flow-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "EXPOSEDAPI_ID",
+     "name": "metrics",
+     "segment": "managementFunction"
+    },
+    {
+     "tmf": "TMF669",
+     "name": "party-role-management-api",
+     "segment": "securityFunction"
+    }
+   ],
+   "dependent": [
+    {
+     "tmf": "TMF666",
+     "name": "account-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF632",
+     "name": "party-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF676",
+     "name": "payment-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF667",
+     "name": "document-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF637",
+     "name": "product-inventory-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF669",
+     "name": "party-role-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF701",
+     "name": "process-flow-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "DEPENDENTAPI_ID",
+     "name": "dependentAPI_name",
+     "segment": "managementFunction"
+    }
+   ]
+  },
+  "TMFC031": {
+   "exposed": [
+    {
+     "tmf": "TMF678",
+     "name": "customer-bill-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF701",
+     "name": "process-flow-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "EXPOSEDAPI_ID",
+     "name": "metrics",
+     "segment": "managementFunction"
+    },
+    {
+     "tmf": "TMF669",
+     "name": "party-role-management-api",
+     "segment": "securityFunction"
+    }
+   ],
+   "dependent": [
+    {
+     "tmf": "TMF666",
+     "name": "account-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF632",
+     "name": "party-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF637",
+     "name": "product-inventory-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF620",
+     "name": "product-catalog-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF701",
+     "name": "process-flow-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF635",
+     "name": "usage-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "DEPENDENTAPI_ID",
+     "name": "dependentAPI_name",
+     "segment": "managementFunction"
+    }
+   ]
+  },
+  "TMFC035": {
+   "exposed": [
+    {
+     "tmf": "TMF672",
+     "name": "user-role-permission-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF669",
+     "name": "party-role-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "EXPOSEDAPI_ID",
+     "name": "metrics",
+     "segment": "managementFunction"
+    }
+   ],
+   "dependent": [
+    {
+     "tmf": "TMF632",
+     "name": "party-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF701",
+     "name": "process-flow-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "DEPENDENTAPI_ID",
+     "name": "dependentAPI_name",
+     "segment": "managementFunction"
+    }
+   ]
+  },
+  "TMFC036": {
+   "exposed": [
+    {
+     "tmf": "TMF699",
+     "name": "sales-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF701",
+     "name": "process-flow-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "EXPOSEDAPI_ID",
+     "name": "metrics",
+     "segment": "managementFunction"
+    },
+    {
+     "tmf": "TMF669",
+     "name": "party-role-management-api",
+     "segment": "securityFunction"
+    }
+   ],
+   "dependent": [
+    {
+     "tmf": "TMF632",
+     "name": "party-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF669",
+     "name": "party-role-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF620",
+     "name": "product-catalog-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF651",
+     "name": "agreement-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF648",
+     "name": "quote-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF622",
+     "name": "product-ordering-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF701",
+     "name": "process-flow-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "DEPENDENTAPI_ID",
+     "name": "dependentAPI_name",
+     "segment": "managementFunction"
+    }
+   ]
+  },
+  "TMFC037": {
+   "exposed": [
+    {
+     "tmf": "TMF649",
+     "name": "performance-thresholding-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF642",
+     "name": "alarm-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF701",
+     "name": "process-flow-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "EXPOSEDAPI_ID",
+     "name": "metrics",
+     "segment": "managementFunction"
+    },
+    {
+     "tmf": "TMF669",
+     "name": "party-role-management-api",
+     "segment": "securityFunction"
+    }
+   ],
+   "dependent": [
+    {
+     "tmf": "TMF639",
+     "name": "resource-inventory-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF638",
+     "name": "service-inventory-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF673",
+     "name": "geographic-address-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF674",
+     "name": "geographic-site-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF657",
+     "name": "service-quality-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF701",
+     "name": "process-flow-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "DEPENDENTAPI_ID",
+     "name": "dependentAPI_name",
+     "segment": "managementFunction"
+    }
+   ]
+  },
+  "TMFC038": {
+   "exposed": [
+    {
+     "tmf": "TMF649",
+     "name": "performance-thresholding-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF642",
+     "name": "alarm-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF701",
+     "name": "process-flow-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "EXPOSEDAPI_ID",
+     "name": "metrics",
+     "segment": "managementFunction"
+    },
+    {
+     "tmf": "TMF669",
+     "name": "party-role-management-api",
+     "segment": "securityFunction"
+    }
+   ],
+   "dependent": [
+    {
+     "tmf": "TMF639",
+     "name": "resource-inventory-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF673",
+     "name": "geographic-address-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF674",
+     "name": "geographic-site-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF675",
+     "name": "geographic-location-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF688",
+     "name": "event-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF701",
+     "name": "process-flow-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "DEPENDENTAPI_ID",
+     "name": "dependentAPI_name",
+     "segment": "managementFunction"
+    }
+   ]
+  },
+  "TMFC039": {
+   "exposed": [
+    {
+     "tmf": "TMF651",
+     "name": "agreement-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF701",
+     "name": "process-flow-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "EXPOSEDAPI_ID",
+     "name": "metrics",
+     "segment": "managementFunction"
+    },
+    {
+     "tmf": "TMF669",
+     "name": "party-role-management-api",
+     "segment": "securityFunction"
+    }
+   ],
+   "dependent": [
+    {
+     "tmf": "TMF632",
+     "name": "party-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF669",
+     "name": "party-role-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF620",
+     "name": "product-catalog-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF637",
+     "name": "product-inventory-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF667",
+     "name": "document-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF701",
+     "name": "process-flow-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "DEPENDENTAPI_ID",
+     "name": "dependentAPI_name",
+     "segment": "managementFunction"
+    }
+   ]
+  },
+  "TMFC040": {
+   "exposed": [
+    {
+     "tmf": "TMF635",
+     "name": "usage-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF677",
+     "name": "usage-consumption-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF701",
+     "name": "process-flow-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "EXPOSEDAPI_ID",
+     "name": "metrics",
+     "segment": "managementFunction"
+    },
+    {
+     "tmf": "TMF669",
+     "name": "party-role-management-api",
+     "segment": "securityFunction"
+    }
+   ],
+   "dependent": [
+    {
+     "tmf": "TMF632",
+     "name": "party-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF669",
+     "name": "party-role-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF620",
+     "name": "product-catalog-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF637",
+     "name": "product-inventory-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF701",
+     "name": "process-flow-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "DEPENDENTAPI_ID",
+     "name": "dependentAPI_name",
+     "segment": "managementFunction"
+    }
+   ]
+  },
+  "TMFC041": {
+   "exposed": [
+    {
+     "tmf": "EXPOSEDAPI_ID",
+     "name": "metrics",
+     "segment": "managementFunction"
+    },
+    {
+     "tmf": "TMF669",
+     "name": "party-role-management-api",
+     "segment": "securityFunction"
+    }
+   ],
+   "dependent": [
+    {
+     "tmf": "DEPENDENTAPI_ID",
+     "name": "dependentAPI_name",
+     "segment": "managementFunction"
+    }
+   ]
+  },
+  "TMFC043": {
+   "exposed": [
+    {
+     "tmf": "TMF642",
+     "name": "alarm-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF656",
+     "name": "service-problem-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF701",
+     "name": "process-flow-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "EXPOSEDAPI_ID",
+     "name": "metrics",
+     "segment": "managementFunction"
+    },
+    {
+     "tmf": "TMF669",
+     "name": "party-role-management-api",
+     "segment": "securityFunction"
+    }
+   ],
+   "dependent": [
+    {
+     "tmf": "DEPENDENTAPI_ID",
+     "name": "dependentAPI_name",
+     "segment": "managementFunction"
+    }
+   ]
+  },
+  "TMFC046": {
+   "exposed": [
+    {
+     "tmf": "TMF646",
+     "name": "appointment-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF701",
+     "name": "process-flow-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "EXPOSEDAPI_ID",
+     "name": "metrics",
+     "segment": "managementFunction"
+    },
+    {
+     "tmf": "TMF669",
+     "name": "party-role-management-api",
+     "segment": "securityFunction"
+    }
+   ],
+   "dependent": [
+    {
+     "tmf": "TMF632",
+     "name": "party-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF669",
+     "name": "party-role-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF701",
+     "name": "process-flow-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "DEPENDENTAPI_ID",
+     "name": "dependentAPI_name",
+     "segment": "managementFunction"
+    }
+   ]
+  },
+  "TMFC050": {
+   "exposed": [
+    {
+     "tmf": "TMF680",
+     "name": "recommendation-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF701",
+     "name": "process-flow-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "EXPOSEDAPI_ID",
+     "name": "metrics",
+     "segment": "managementFunction"
+    },
+    {
+     "tmf": "TMF669",
+     "name": "party-role-management-api",
+     "segment": "securityFunction"
+    }
+   ],
+   "dependent": [
+    {
+     "tmf": "TMF620",
+     "name": "product-catalog-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF637",
+     "name": "product-inventory-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF622",
+     "name": "product-ordering-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF679",
+     "name": "product-offering-qualification-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF666",
+     "name": "account-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF629",
+     "name": "customer-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF663",
+     "name": "shopping-cart-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF671",
+     "name": "promotion-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF673",
+     "name": "geographic-address-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF675",
+     "name": "geographic-location-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF632",
+     "name": "party-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF669",
+     "name": "party-role-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF678",
+     "name": "customer-bill-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF621",
+     "name": "trouble-ticket-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF635",
+     "name": "usage-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "DEPENDENTAPI_ID",
+     "name": "dependentAPI_name",
+     "segment": "managementFunction"
+    }
+   ]
+  },
+  "TMFC054": {
+   "exposed": [
+    {
+     "tmf": "TMF769",
+     "name": "product-test-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF701",
+     "name": "process-flow-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "EXPOSEDAPI_ID",
+     "name": "metrics",
+     "segment": "managementFunction"
+    },
+    {
+     "tmf": "TMF669",
+     "name": "party-role-management-api",
+     "segment": "securityFunction"
+    }
+   ],
+   "dependent": [
+    {
+     "tmf": "TMF620",
+     "name": "product-catalog-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF637",
+     "name": "product-inventory-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF632",
+     "name": "party-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF669",
+     "name": "party-role-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF653",
+     "name": "service-test-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF638",
+     "name": "service-inventory-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF724",
+     "name": "incident-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF701",
+     "name": "process-flow-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "DEPENDENTAPI_ID",
+     "name": "dependentAPI_name",
+     "segment": "managementFunction"
+    }
+   ]
+  },
+  "TMFC055": {
+   "exposed": [
+    {
+     "tmf": "TMF653",
+     "name": "service-test-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF701",
+     "name": "process-flow-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "EXPOSEDAPI_ID",
+     "name": "metrics",
+     "segment": "managementFunction"
+    },
+    {
+     "tmf": "TMF669",
+     "name": "party-role-management-api",
+     "segment": "securityFunction"
+    }
+   ],
+   "dependent": [
+    {
+     "tmf": "TMF632",
+     "name": "party-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF669",
+     "name": "party-role-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF633",
+     "name": "service-catalog-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF638",
+     "name": "service-inventory-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF639",
+     "name": "resource-inventory-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF701",
+     "name": "process-flow-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "DEPENDENTAPI_ID",
+     "name": "dependentAPI_name",
+     "segment": "managementFunction"
+    }
+   ]
+  },
+  "TMFC061": {
+   "exposed": [
+    {
+     "tmf": "TMF713",
+     "name": "work-management",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF697",
+     "name": "work-order-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF714",
+     "name": "work-qualification-management",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF701",
+     "name": "process-flow-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF688",
+     "name": "event-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "EXPOSEDAPI_ID",
+     "name": "metrics",
+     "segment": "managementFunction"
+    },
+    {
+     "tmf": "TMF669",
+     "name": "party-role-management-api",
+     "segment": "securityFunction"
+    }
+   ],
+   "dependent": [
+    {
+     "tmf": "TMF632",
+     "name": "party-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF669",
+     "name": "party-role-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF646",
+     "name": "appointment-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF701",
+     "name": "process-flow-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF688",
+     "name": "event-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "DEPENDENTAPI_ID",
+     "name": "dependentAPI_name",
+     "segment": "managementFunction"
+    }
+   ]
+  },
+  "TMFC062": {
+   "exposed": [
+    {
+     "tmf": "TMF702",
+     "name": "resource-activation-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF664",
+     "name": "resource-function-activation-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "EXPOSEDAPI_ID",
+     "name": "metrics",
+     "segment": "managementFunction"
+    },
+    {
+     "tmf": "TMF669",
+     "name": "party-role-management-api",
+     "segment": "securityFunction"
+    }
+   ],
+   "dependent": [
+    {
+     "tmf": "TMF634",
+     "name": "resource-catalog-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "TMF639",
+     "name": "resource-inventory-management-api",
+     "segment": "coreFunction"
+    },
+    {
+     "tmf": "DEPENDENTAPI_ID",
+     "name": "dependentAPI_name",
+     "segment": "managementFunction"
+    }
+   ]
+  }
+ }
+}

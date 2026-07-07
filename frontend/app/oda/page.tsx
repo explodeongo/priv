@@ -219,7 +219,7 @@ export default function OdaPage() {
                             <code className="text-[10.5px] font-mono bg-gray-100 dark:bg-slate-800 text-gray-500 dark:text-slate-400 rounded px-1.5 py-0.5">{c.code}</code>
                             {!!c.exposed?.length && (
                               <span className="text-[10.5px] text-green-700 dark:text-green-400 bg-green-50 dark:bg-green-500/10 border border-green-200 dark:border-green-500/30 rounded px-1.5 py-0.5">
-                                reference impl · {c.exposed.length} APIs
+                                {c.exposed.length} exposed API{c.exposed.length === 1 ? "" : "s"}
                               </span>
                             )}
                           </div>
@@ -288,7 +288,7 @@ export default function OdaPage() {
                 {/* APIs — only when we have real manifest data */}
                 {sel.exposed?.length ? (
                   <div>
-                    <div className="text-[11px] font-semibold uppercase tracking-wide text-gray-400 mb-2">Exposed Open APIs (reference implementation)</div>
+                    <div className="text-[11px] font-semibold uppercase tracking-wide text-gray-400 mb-2">Exposed Open APIs (official component spec)</div>
                     <div className="space-y-1.5">
                       {sel.exposed.map((a, i) => (
                         <div key={i} className="flex items-center gap-2.5 rounded-lg border border-gray-100 dark:border-slate-800 px-3 py-2">

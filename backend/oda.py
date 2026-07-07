@@ -191,20 +191,32 @@ def _manifest_apis():
 
 
 def catalog() -> dict:
-    """The official ODA component map (35 components, TM Forum v1.0.0 release), enriched
-    with exposed/dependent APIs where a reference manifest exists in the local corpus."""
+    """The official ODA component map (35 components, TM Forum v1.0.0 release). Every
+    component is enriched with its exposed/dependent TMF APIs from the official component
+    specifications (oda_component_apis.json, fetched from TM Forum's published repo);
+    local reference manifests fill in only where the official data is absent."""
     global _CATALOG
     if _CATALOG is not None:
         return _CATALOG
     data = json.load(open(_CATALOG_FILE, encoding="utf-8"))
+    try:
+        official = json.load(open(os.path.join(_HERE, "oda_component_apis.json"),
+                                  encoding="utf-8"))["components"]
+    except Exception:
+        official = {}
     manifests = _manifest_apis()
     for c in data["components"]:
         short = c["short"].lower()
-        hit = manifests.get(short) or next(
-            (v for k, v in manifests.items() if short.startswith(k) and len(k) >= 8), None)
-        if hit:
-            c["exposed"] = hit["exposed"]
-            c["dependent"] = hit["dependent"]
+        off = official.get(c["code"])
+        if off:
+            c["exposed"] = [a for a in off["exposed"] if (a.get("tmf") or "").startswith("TMF")]
+            c["dependent"] = [a for a in off["dependent"] if (a.get("tmf") or "").startswith("TMF")]
+        else:
+            hit = manifests.get(short) or next(
+                (v for k, v in manifests.items() if short.startswith(k) and len(k) >= 8), None)
+            if hit:
+                c["exposed"] = hit["exposed"]
+                c["dependent"] = hit["dependent"]
         c["spec_url"] = data["spec_url_pattern"].replace("{code}", c["code"]).replace("{short}", c["short"])
     _CATALOG = data
     return data
