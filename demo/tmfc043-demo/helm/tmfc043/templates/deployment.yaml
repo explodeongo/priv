@@ -1,0 +1,58 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-fault
+  namespace: {{ .Values.namespace }}
+  labels:
+    app: {{ .Release.Name }}-fault
+    oda.tmforum.org/componentName: {{ .Release.Name }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: {{ .Release.Name }}-fault
+  template:
+    metadata:
+      labels:
+        app: {{ .Release.Name }}-fault
+        oda.tmforum.org/componentName: {{ .Release.Name }}
+    spec:
+      containers:
+        - name: fault
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          {{- if .Values.broken }}
+          env:
+            - name: DEMO_BROKEN
+              value: "1"
+          {{- end }}
+          ports:
+            - containerPort: 8080
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 2
+            periodSeconds: 3
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-fault
+  namespace: {{ .Values.namespace }}
+  labels:
+    app: {{ .Release.Name }}-fault
+spec:
+  type: NodePort
+  selector:
+    app: {{ .Release.Name }}-fault
+  ports:
+    - port: 8080
+      targetPort: 8080
+      nodePort: {{ .Values.nodePort }}

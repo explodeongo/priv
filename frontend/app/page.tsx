@@ -317,6 +317,7 @@ export default function Home() {
   const [logo, setLogo] = useState<string | undefined>();
   const [scope, setScope] = useState<"all" | "kb" | "docs">("all");
   const [mode, setMode]   = useState<"deep" | "fast">("deep");
+  const [cacheOn, setCacheOn] = useState(true);
   const [chatCfg, setChatCfg] = useState<{ placeholder: string; suggestions: string[] }>({
     placeholder: "Ask about TM Forum APIs, ODA, eTOM, SID...", suggestions: SUGGESTED,
   });
@@ -377,6 +378,7 @@ export default function Home() {
     fetch(`${API}/coverage`).then(r => r.json()).then(setCoverage).catch(() => {});
     try { if (!localStorage.getItem("synaptdi_welcomed")) setShowWelcome(true); } catch {}
     try { const m = localStorage.getItem("synaptdi_mode"); if (m === "fast" || m === "deep") setMode(m); } catch {}
+    try { if (localStorage.getItem("synaptdi_cache") === "off") setCacheOn(false); } catch {}
   }, []);
 
   const firstLetter = (branding.companyName || "S")[0].toUpperCase();
@@ -436,7 +438,7 @@ export default function Home() {
       const res = await fetch(`${API}/query/stream`, {
         method: "POST",
         headers: authH(true),
-        body: JSON.stringify({ question, top_k: prefs.topK, scope, history, mode, no_cache: fresh, project_instructions: projectInstructions }),
+        body: JSON.stringify({ question, top_k: prefs.topK, scope, history, mode, no_cache: fresh || !cacheOn, project_instructions: projectInstructions }),
         signal: controller.signal,
       });
       if (!res.ok || !res.body) throw new Error(`API error ${res.status}`);
@@ -485,7 +487,7 @@ export default function Home() {
       setLoading(false);
       inputRef.current?.focus();
     }
-  }, [scope, mode, prefs, activeId]);
+  }, [scope, mode, cacheOn, prefs, activeId]);
 
   const ask = useCallback((question: string) => {
     if (!question.trim() || loading) return;
@@ -845,6 +847,19 @@ export default function Home() {
                 <><svg className="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24"><path d="M13 2L4.5 13.5H11l-1 8.5 8.5-11.5H12l1-8.5z" /></svg>Fast</>
               ) : (
                 <><svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.8"><path strokeLinecap="round" strokeLinejoin="round" d="M5 3v4M3 5h4M6 17v4m-2-2h4m6-15l2.5 6.5L21 13l-6.5 2.5L12 22l-2.5-6.5L3 13l6.5-2.5L12 2z" /></svg>Deep</>
+              )}
+            </button>
+            <button type="button" onClick={() => setCacheOn(c => { const n = !c; try { localStorage.setItem("synaptdi_cache", n ? "on" : "off"); } catch {} return n; })}
+              title={cacheOn ? "Caching on — an identical question can answer instantly" : "Caching off — every question always generates a fresh answer"}
+              className={`text-xs px-2.5 py-1 rounded-full border transition-colors flex items-center gap-1 ${
+                !cacheOn
+                  ? "bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400 border-amber-300 dark:border-amber-500/40"
+                  : "bg-white dark:bg-slate-800 text-gray-500 dark:text-slate-400 border-gray-200 dark:border-slate-700 hover:bg-gray-50 dark:hover:bg-slate-700"
+              }`}>
+              {cacheOn ? (
+                <><svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.8"><ellipse cx="12" cy="5" rx="8" ry="3" /><path strokeLinecap="round" d="M4 5v14c0 1.66 3.58 3 8 3s8-1.34 8-3V5" /><path strokeLinecap="round" d="M4 12c0 1.66 3.58 3 8 3s8-1.34 8-3" /></svg>Cached</>
+              ) : (
+                <><svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.8"><polyline strokeLinecap="round" strokeLinejoin="round" points="23 4 23 10 17 10" /><path strokeLinecap="round" strokeLinejoin="round" d="M20.49 15a9 9 0 11-2.12-9.36L23 10" /></svg>Fresh</>
               )}
             </button>
           </div>

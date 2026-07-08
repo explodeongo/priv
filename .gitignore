@@ -6,6 +6,7 @@ __pycache__/
 # Vector DB — regenerable via `python ingest.py` (large binary, do not commit)
 backend/chroma_db/
 backend/chroma_db.bak/
+/chroma_db/
 
 # Cloned TM Forum repos — re-fetched by ingest.py; contain nested .git repos (~333MB)
 backend/data/

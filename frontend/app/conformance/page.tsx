@@ -2,6 +2,7 @@
 import { useState, useRef, useEffect, Fragment } from "react";
 import AppShell from "../components/AppShell";
 import { useToast } from "../components/Toast";
+import ODAComponentCTK from "./oda/ODAComponentCTK";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -49,7 +50,7 @@ function download(name: string, text: string, type = "text/plain") {
 }
 
 export default function ConformancePage() {
-  const [mode, setMode] = useState<"single" | "portfolio">("single");
+  const [mode, setMode] = useState<"single" | "portfolio" | "odactk">("single");
   const [report, setReport] = useState<Report | null>(null);
   const [portfolio, setPortfolio] = useState<Portfolio | null>(null);
   const [openRows, setOpenRows] = useState<Set<number>>(new Set());
@@ -71,7 +72,7 @@ export default function ConformancePage() {
   // Deep-link: /conformance?mode=portfolio
   useEffect(() => {
     const m = new URLSearchParams(window.location.search).get("mode");
-    if (m === "portfolio" || m === "single") setMode(m);
+    if (m === "portfolio" || m === "single" || m === "odactk") setMode(m);
   }, []);
 
   const checkSingle = async (file: File) => {
@@ -172,10 +173,10 @@ export default function ConformancePage() {
           <div className="flex items-center gap-3">
             <span className="font-semibold text-gray-800 dark:text-slate-100 text-sm tracking-tight">TMF Conformance &amp; X-ray</span>
             <div className="hidden sm:flex items-center gap-1 bg-gray-100 dark:bg-slate-800 rounded-lg p-0.5 text-xs">
-              {(["single", "portfolio"] as const).map((m) => (
+              {(["single", "portfolio", "odactk"] as const).map((m) => (
                 <button key={m} onClick={() => { setMode(m); reset(); }}
                   className={`px-2.5 py-1 rounded-md font-medium transition-colors ${mode === m ? "bg-white dark:bg-slate-700 text-gray-900 dark:text-white shadow-sm" : "text-gray-500 dark:text-slate-400"}`}>
-                  {m === "single" ? "Single spec" : "Portfolio X-ray"}
+                  {m === "single" ? "Single spec" : m === "portfolio" ? "Portfolio X-ray" : "ODA Component CTK"}
                 </button>
               ))}
             </div>
@@ -191,8 +192,11 @@ export default function ConformancePage() {
         <main className="flex-1 overflow-y-auto px-4 py-8">
           <div className="max-w-3xl mx-auto">
 
+            {/* ── ODA Component CTK (execution-backed conformance) ── */}
+            {mode === "odactk" && <ODAComponentCTK />}
+
             {/* ── Upload ── */}
-            {!report && !portfolio && (
+            {mode !== "odactk" && !report && !portfolio && (
               <div className="flex flex-col items-center">
                 <div className="text-center mb-6">
                   <h2 className="text-xl font-bold text-gray-900 dark:text-white">

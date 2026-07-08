@@ -1,0 +1,36 @@
+# ODA Component CustomResourceDefinition (oda.tmforum.org/v1).
+# Permissive schema (preserve-unknown-fields) with a status subresource, so the deployed
+# component carries the exact spec + status shape the official Component CTK's deployment.js
+# reads: status["summary/status"].deployment_status and status.coreAPIs/securityAPIs[].url.
+# In a full ODA Canvas these fields are written by the Canvas component/API operators; here
+# they are set explicitly (see status-patch) — the only operator-substituted piece; every
+# other layer (pods, helm, the API CTKs) is real.
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: components.oda.tmforum.org
+spec:
+  group: oda.tmforum.org
+  scope: Namespaced
+  names:
+    plural: components
+    singular: component
+    kind: Component
+    shortNames: [comp]
+  versions:
+    - name: v1
+      served: true
+      storage: true
+      subresources:
+        status: {}
+      schema:
+        openAPIV3Schema:
+          type: object
+          x-kubernetes-preserve-unknown-fields: true
+          properties:
+            spec:
+              type: object
+              x-kubernetes-preserve-unknown-fields: true
+            status:
+              type: object
+              x-kubernetes-preserve-unknown-fields: true

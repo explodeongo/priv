@@ -31,7 +31,10 @@ import ingest   # reuse the ingestion parsers: parse_openapi_spec, parse_markdow
 import conformance   # TMF630 conformance rule engine
 import tmf_profile   # profile-aware conformance (diff vs canonical TMF specs)
 import xray          # API estate X-ray (portfolio roll-up)
-import oda           # ODA Component conformance
+import oda           # ODA Component conformance (schema roll-up)
+import oda_component_contract  # canonical ODA Component contract resolver (execution-backed conformance)
+import oda_ctk_jobs   # ODA Component CTK execution jobs (execution-backed conformance)
+import oda_ctk_sanitize   # centralized public-response redaction boundary (Phase 4 audit)
 import spec_facts    # deterministic answers for structured spec-fact questions
 from vectorstore import get_store, reset_store   # backend-agnostic vector store (Chroma today)
 
@@ -52,6 +55,22 @@ FAST_TOP_K       = int(os.getenv("FAST_TOP_K", "4"))          # Fast-mode: fewer
 NUM_THREAD       = int(os.getenv("OLLAMA_NUM_THREAD", "0"))   # 0 = let Ollama decide; set to physical cores on CPU
 EMBED_MODEL = os.getenv("EMBED_MODEL","nomic-embed-text")
 CHROMA_PATH = os.getenv("CHROMA_PATH","./chroma_db")
+# Response cache: on by default; set CACHE_ENABLED=false to force every /query and
+# /query/stream call through the real, current pipeline (no reads, no writes) — the
+# safe way to smoke-test a routing/grounding/integrity change against live traffic
+# without a stale cached answer masking it.
+CACHE_ENABLED = os.getenv("CACHE_ENABLED", "1").strip().lower() not in ("0", "false", "no", "off")
+# Bump whenever routing, grounding, integrity-validation, or version-resolution
+# semantics change — it's folded into the cache key, so a cached answer from an older
+# pipeline is never reused (a plain cache_clear() catches "content changed"; this
+# catches "the code that turns content into an answer changed"). History: 1 = original
+# deterministic short-circuit (raw template, no LLM); 2 = grounded-generation bridge +
+# integrity validation; 3 = required-fields router rewrite (confirm/challenge phrasing,
+# explicit-version isolation, independent-version comparison); 4 = integrity validator's
+# "not required" hedge-detection widened to cover contractions/adverbs/articles
+# ("isn't required", "not actually required", "not a required field") — the narrower
+# version was misreading a correct denial as a false claim and discarding good answers.
+CACHE_PIPELINE_VERSION = os.getenv("CACHE_PIPELINE_VERSION", "4")
 
 # ── Retrieval tuning ─────────────────────────────────────────────────────────
 TOP_K            = 8      # chunks handed to the LLM
@@ -154,20 +173,43 @@ def _cache() -> dict:
         except Exception: _answer_cache = {}
     return _answer_cache
 
-def _cache_key(question: str, scope: str, mode: str) -> str:
-    return hashlib.sha1(f"{question.strip().lower()}|{scope}|{mode}".encode()).hexdigest()
+def _cache_key(question: str, scope: str, mode: str, project_instructions: str = "") -> str:
+    """Every semantically-relevant input to the answer, so two questions that could
+    legitimately get different answers never collide on one cache entry:
+    - CACHE_PIPELINE_VERSION: bumped whenever routing/grounding/integrity/version-
+      resolution logic changes — makes an old cached answer unreachable the moment the
+      code that could have gotten it wrong changes, without touching stored entries.
+    - question/scope/mode: as before.
+    - model: the actual model name for `mode` (not just the "fast"/"deep" label) —
+      changing LLM_MODEL/FAST_MODEL changes answer semantics even if mode doesn't.
+    - persona: the admin-configurable domain persona baked into every system prompt
+      (_system_prompt) — an admin changing it should not surface an answer generated
+      under the old one.
+    - project_instructions: a Project's standing notes, folded into the prompt
+      (_project_extra) — two Projects asking the same question can get different,
+      equally valid answers and must not share a cache entry.
+    """
+    model = FAST_MODEL if mode == "fast" else LLM_MODEL
+    persona = (load_chat_config().get("persona") or DEFAULT_CHAT_CONFIG["persona"]).strip()
+    parts = [str(CACHE_PIPELINE_VERSION), question.strip().lower(), scope, mode, model,
+             persona, (project_instructions or "").strip()]
+    return hashlib.sha1("|".join(parts).encode()).hexdigest()
 
-def cache_get(question: str, scope: str, mode: str):
-    return _cache().get(_cache_key(question, scope, mode))
+def cache_get(question: str, scope: str, mode: str, project_instructions: str = ""):
+    if not CACHE_ENABLED:
+        return None
+    return _cache().get(_cache_key(question, scope, mode, project_instructions))
 
-def cache_put(question: str, scope: str, mode: str, answer: str, sources: list, confidence: Optional[dict] = None):
-    if not sources:
-        return                                   # never cache refusals / unsourced answers
+def cache_put(question: str, scope: str, mode: str, answer: str, sources: list,
+             confidence: Optional[dict] = None, project_instructions: str = ""):
+    if not CACHE_ENABLED or not sources:
+        return                                   # cache disabled, or a refusal/unsourced answer
     try:
         with _cache_lock:
             c = _cache()
-            c[_cache_key(question, scope, mode)] = {"answer": answer, "sources": sources,
-                                                    "confidence": confidence or {}, "ts": int(time.time())}
+            c[_cache_key(question, scope, mode, project_instructions)] = {
+                "answer": answer, "sources": sources,
+                "confidence": confidence or {}, "ts": int(time.time())}
             while len(c) > 300:                  # cap — drop oldest
                 c.pop(min(c, key=lambda k: c[k].get("ts", 0)))
             CACHE_FILE.write_text(json.dumps(c))
@@ -175,7 +217,10 @@ def cache_put(question: str, scope: str, mode: str, answer: str, sources: list, 
         pass
 
 def cache_clear():
-    """Call whenever the index content changes — cached answers may be stale."""
+    """Drop every cached /query answer (answer_cache.json only) — called whenever the
+    index content changes, and safe to call any time as a manual, development-safe
+    reset (see POST /admin/cache/clear). Never touches ChromaDB, indexed documents, or
+    conversation history — those live in separate storage this never opens."""
     global _answer_cache
     try:
         with _cache_lock:
@@ -788,6 +833,72 @@ def _system_prompt(guarded: bool) -> str:
             "You explain things clearly and helpfully, like a knowledgeable colleague who wants the reader to truly get it.")
     return f"{head}\n\n{_PROMPT_INSTRUCTIONS}" + (_GUARD_LINE if guarded else "")
 
+# ── General-RAG answer shaping ────────────────────────────────────────────────────────
+# The generic "Shape the answer" rules in _PROMPT_INSTRUCTIONS key off what's in the
+# retrieved CONTEXT ("Fields, attributes → a table"), so an IDENTITY question ("what is
+# TMF620?") whose chunks happen to be schema-heavy gets answered as a field/operations
+# audit instead of a definition. This classifies the QUESTION's intent up front and, for
+# definitional questions, injects an instruction that constrains answer SCOPE — the
+# retrieved evidence is still the only source of facts; this is shaping, not invention.
+# SCHEMA_GOVERNANCE never reaches here — it's owned by the deterministic route before RAG.
+_SHAPE_IDENTITY = re.compile(
+    r"^\s*(what\s+is|what'?s|what\s+are|whats)\b|^\s*(explain|describe|define)\b|"
+    r"\btell\s+me\s+about\b|\b(overview|summary|introduction)\s+of\b|"
+    r"^\s*what\s+does\b.*\bdo\b|\bwho\s+is\b|\bwhat\s+kind\s+of\b",
+    re.I,
+)
+_SHAPE_COMPARISON = re.compile(
+    r"\b(difference|differences|compare|comparison|versus|vs\.?)\b|\b\w+\s+vs\.?\s+\w+\b", re.I,
+)
+_SHAPE_HOWTO = re.compile(
+    r"^\s*how\s+(do|to|can|would|should|does)\b|\bhow\s+do\s+i\b|\bexample\s+of\b|"
+    r"\bshow\s+me\s+how\b|\bhow\s+would\s+i\b|\bwrite\s+(a|an|the)\b.*\b(request|call|query)\b",
+    re.I,
+)
+
+
+def _answer_shape(question: str) -> str:
+    """Lightweight general-intent classifier for the RAG answer's SHAPE (never routing):
+    IDENTITY, COMPARISON, HOWTO, or GENERAL. Comparison is checked before identity so
+    "what is the difference between X and Y" is COMPARISON, and how-to before identity so
+    "how do I …" wins over an "explain"-like opener. No API-id or domain hardcoding."""
+    q = question or ""
+    if _SHAPE_HOWTO.search(q):
+        return "HOWTO"
+    if _SHAPE_COMPARISON.search(q):
+        return "COMPARISON"
+    if _SHAPE_IDENTITY.search(q):
+        return "IDENTITY"
+    return "GENERAL"
+
+
+def _answer_shape_directive(question: str) -> str:
+    """Per-question shaping instruction appended to the RAG system prompt. Empty for
+    GENERAL (keep existing behaviour). Overrides the generic context-driven shaping rules
+    for definitional/comparison/how-to intents."""
+    shape = _answer_shape(question)
+    if shape == "IDENTITY":
+        return ("\n\nANSWER SHAPE — IDENTITY / DEFINITION (overrides the generic shaping rules "
+                "above): the user asked WHAT this is, not for its schema. Lead with a one-sentence "
+                "definition of what it is and its primary purpose/domain, then a short plain-English "
+                "explanation of its role and, only if grounded in the CONTEXT, 3–5 core capabilities "
+                "as brief bullets. You MAY note the current/latest version if the context shows it. "
+                "Do NOT emit a Field/Required/Description (or any property) table, do NOT enumerate "
+                "schema attributes, do NOT include curl/request/code examples, and do NOT turn this "
+                "into a schema audit or a version-by-version comparison — unless the user explicitly "
+                "asked for fields, an example, or a comparison. Keep it a crisp definitional overview.")
+    if shape == "COMPARISON":
+        return ("\n\nANSWER SHAPE — COMPARISON: contrast the named items directly. Represent EVERY "
+                "named item using its own grounded evidence; if the context lacks evidence for one "
+                "side, say so explicitly rather than inventing it. A compact comparison table or "
+                "parallel bullets, then a one-line bottom line on when to use which. Do not pad with "
+                "a full field/schema audit of either side unless asked.")
+    if shape == "HOWTO":
+        return ("\n\nANSWER SHAPE — HOW-TO / USAGE: give the concrete steps, and when the context "
+                "supports it a short runnable example (endpoint path, query parameters, or a curl "
+                "snippet) is appropriate and welcome. Keep it focused on accomplishing the task.")
+    return ""
+
 def _source_label(meta: dict) -> str:
     """Prefix the spec number so the model connects e.g. 'TMF622' (in the
     question) with 'Product Ordering' (the spec's title) — without it the model
@@ -927,6 +1038,120 @@ def generate_answer(prompt: str, model: str = "", num_predict: int = DEEP_NUM_PR
                           timeout=600)
         r.raise_for_status()
         return r.json()["response"].strip()
+
+# ── Grounded generation bridge for deterministic spec facts ────────────────────────
+# A required-fields question is resolved deterministically first (spec_facts), then
+# handed to the LLM as locked ground truth for a rich explanation, then integrity-
+# validated before it's ever returned: DETERMINISTIC RESOLUTION -> VERIFIED FACT
+# OBJECT -> GROUNDED LLM GENERATION -> INTEGRITY VALIDATION -> RESPONSE. No RAG
+# chunks are mixed in here — the fact object already carries the schema-sourced
+# detail (field descriptions, nested requirements) the model needs, and skipping
+# retrieval sidesteps any version-mixing risk from the general corpus (Phase 5).
+def _build_grounded_prompt(question: str, extra: str, history=None) -> str:
+    return f"{_system_prompt(False)}{extra}\n\n{_format_history(history)}QUESTION: {question}\n\nANSWER:"
+
+def _grounded_required_fields_answer(fact: dict, req, model: str, npred: int) -> dict:
+    def _gen(q, extra):
+        return generate_answer(_build_grounded_prompt(q, extra, req.history), model, npred)
+    return spec_facts.grounded_answer(req.question, fact, _gen)
+
+def _grounded_comparison_answer(comparison: dict, req, model: str, npred: int) -> dict:
+    def _gen(q, extra):
+        return generate_answer(_build_grounded_prompt(q, extra, req.history), model, npred)
+    return spec_facts.grounded_comparison_answer(req.question, comparison, _gen)
+
+def _grounded_property_answer(fact: dict, req, model: str, npred: int) -> dict:
+    def _gen(q, extra):
+        return generate_answer(_build_grounded_prompt(q, extra, req.history), model, npred)
+    return spec_facts.grounded_property_answer(req.question, fact, _gen)
+
+def _grounded_aggregation_answer(fact: dict, req, model: str, npred: int) -> dict:
+    def _gen(q, extra):
+        return generate_answer(_build_grounded_prompt(q, extra, req.history), model, npred)
+    return spec_facts.grounded_aggregation_answer(req.question, fact, _gen)
+
+_HIGH_CONF = {"level": "high", "score": 100, "strong": 1}
+_LOW_CONF  = {"level": "low", "score": 0, "strong": 0}
+
+def _resolve_governance_route(req, model: str, npred: int):
+    """Runs the full governance router — required-fields (single-version or
+    comparison), property claims, and corpus-wide aggregation, resolved or explicitly
+    unresolved/refused — and returns (result, confidence) ready for
+    _fact_response_payload/_fact_stream_response, or None if the question isn't a
+    governance-shaped question at all (caller falls through to ODA, then general RAG).
+    This is the ONE place that dispatches on fact_type/status, called identically by
+    both /query and /query/stream, so they can never diverge on routing, resolved
+    version, exhaustiveness, or provenance (Phase 7: a governance-shaped question
+    either resolves deterministically or comes back explicitly UNRESOLVED/NON_EXHAUSTIVE
+    — `spec_facts.route_governance_question` never returns a silent miss for one)."""
+    rf = spec_facts.route_governance_question(req.question)
+    if rf is None:
+        return None
+    raw = spec_facts.wants_raw(req.question)
+    ft = rf.get("fact_type")
+
+    if ft == "REQUIRED_FIELDS_COMPARISON":
+        if rf["status"] == "UNRESOLVED":
+            return spec_facts.unresolved_comparison_answer(rf), _LOW_CONF
+        result = (spec_facts.raw_comparison_answer(rf) if raw
+                  else _grounded_comparison_answer(rf, req, model, npred))
+        return result, _HIGH_CONF
+
+    if ft == "REQUIRED_FIELDS":
+        if rf["status"] == "UNRESOLVED":
+            return spec_facts.unresolved_answer(rf), _LOW_CONF
+        result = (spec_facts.raw_fact_answer(rf) if raw
+                  else _grounded_required_fields_answer(rf, req, model, npred))
+        return result, _HIGH_CONF
+
+    if ft in ("PROPERTY_EXISTENCE", "PROPERTY_REQUIRED", "PROPERTY_OPTIONAL"):
+        result = (spec_facts.raw_property_fact_answer(rf) if raw
+                  else _grounded_property_answer(rf, req, model, npred))
+        return result, _HIGH_CONF
+
+    if ft in ("SCHEMA_AGGREGATION", "REQUIRED_PROPERTY_AGGREGATION"):
+        if rf["status"] == "UNRESOLVED":
+            return spec_facts.unresolved_aggregation_answer(rf), _LOW_CONF
+        if not rf["exhaustive"]:
+            # Phase 5: never let the LLM near a corpus-wide claim the system can't fully
+            # verify — the deterministic refusal-with-partial-detail IS the answer.
+            return spec_facts.render_aggregation_fact_markdown(rf), _LOW_CONF
+        result = (spec_facts.raw_aggregation_fact_answer(rf) if raw
+                  else _grounded_aggregation_answer(rf, req, model, npred))
+        return result, _HIGH_CONF
+
+    # GOVERNANCE_REFUSAL (or any other unresolved shape): unmistakably a TM Forum
+    # schema-fact question, but nothing above resolved anything — never fall through
+    # to general RAG for it (Phase 7).
+    return rf, _LOW_CONF
+
+def _fact_response_payload(req, scope, mode, start, who, result: dict, conf: dict) -> "QueryResponse":
+    """Shared /query response for a deterministically-resolved fact (required-fields,
+    comparison, or ODA) — same cache/log handling either way; confidence is the
+    caller's call (high for a resolved fact, low for an explicit unresolved result)."""
+    _log_query(req.question, True, who)
+    if not req.history and not req.no_cache:
+        cache_put(req.question, scope, mode, result["answer"], result["sources"], conf,
+                  project_instructions=req.project_instructions)
+    return QueryResponse(answer=result["answer"], sources=result["sources"],
+                         latency_ms=int((time.time() - start) * 1000),
+                         chunks_retrieved=1, confidence=conf)
+
+def _fact_stream_response(req, result: dict, conf: dict, start, who) -> StreamingResponse:
+    """Shared /query/stream response for a deterministically-resolved fact. The answer is
+    already fully resolved (and, for required-fields, already integrity-validated) before
+    this is called, so — same as the short-circuit this replaces — it streams as one
+    chunk rather than token-by-token. Caching is the caller's job (it needs scope/mode)."""
+    def gen():
+        _log_query(req.question, True, who)
+        yield json.dumps({"type": "context", "sources": result["sources"],
+                          "specs": [result["tmf"]] if result.get("tmf") else [],
+                          "confidence": conf}) + "\n"
+        yield json.dumps({"type": "token", "text": result["answer"]}) + "\n"
+        yield json.dumps({"type": "done", "sources": result["sources"], "confidence": conf,
+                          "latency_ms": int((time.time() - start) * 1000),
+                          "chunks_retrieved": 1}) + "\n"
+    return StreamingResponse(gen(), media_type="application/x-ndjson")
 
 # ── Schemas ────────────────────────────────────────────────────────────────────
 class QueryRequest(BaseModel):
@@ -1227,26 +1452,34 @@ def query(req: QueryRequest, authorization: Optional[str] = Header(None)):
     if mode == "fast":
         top_k = min(top_k, FAST_TOP_K)   # fewer chunks → smaller prompt → faster on CPU
     if not req.history and not req.no_cache:  # skip cache for follow-ups and Regenerate
-        hit = cache_get(req.question, scope, mode)
+        hit = cache_get(req.question, scope, mode, project_instructions=req.project_instructions)
         if hit:
             _log_query(req.question, True, who)
             return QueryResponse(answer=hit["answer"], sources=hit["sources"],
                                  latency_ms=int((time.time()-start)*1000),
                                  chunks_retrieved=0, cached=True, confidence=hit.get("confidence", {}))
 
-    # Deterministic spec-fact short-circuit: structured questions ("what mandatory
-    # fields does TMF622 Product Order require?") are answered straight from the
-    # canonical schema — correct by construction, never the LLM's interpretation.
+    # Deterministic governance-fact resolution: structured questions ("what mandatory
+    # fields does TMF622 Product Order require?", confirmations/challenges naming a
+    # specific field — including one that doesn't exist, "which schemas contain/require
+    # X" corpus-wide aggregation, and version comparisons) are resolved straight from
+    # the canonical schema — correct by construction, never sampled from retrieval. An
+    # explicit version that can't be found, or a corpus-wide claim whose enumeration
+    # can't be completed exhaustively, resolves to an explicit unresolved/refused
+    # result — never a silent fall-through to general RAG that then answers the
+    # governance question generatively. Unless the user explicitly asked for raw,
+    # unexplained output, a resolved fact is handed to the LLM as locked ground truth
+    # for a rich explanation, integrity-validated before being returned; any violation
+    # falls back to the exact deterministic answer. ODA component questions are
+    # unaffected — still answered directly, as before.
     if scope in ("all", "kb"):
-        fact = spec_facts.answer(req.question)
-        if fact:
-            _log_query(req.question, True, who)
-            conf = {"level": "high", "score": 100, "strong": 1}
-            if not req.history and not req.no_cache:
-                cache_put(req.question, scope, mode, fact["answer"], fact["sources"], conf)
-            return QueryResponse(answer=fact["answer"], sources=fact["sources"],
-                                 latency_ms=int((time.time() - start) * 1000),
-                                 chunks_retrieved=1, confidence=conf)
+        routed = _resolve_governance_route(req, model, npred)
+        if routed:
+            result, conf = routed
+            return _fact_response_payload(req, scope, mode, start, who, result, conf)
+        oda_fact = spec_facts.oda_answer(req.question)
+        if oda_fact:
+            return _fact_response_payload(req, scope, mode, start, who, oda_fact, _HIGH_CONF)
 
     rq = _retrieval_query(req.question, req.history)
     try:    q_emb = embed_query(rq)
@@ -1266,7 +1499,7 @@ def query(req: QueryRequest, authorization: Optional[str] = Header(None)):
         return QueryResponse(answer=empty, sources=[],
                              latency_ms=int((time.time()-start)*1000), chunks_retrieved=0)
 
-    extra = _project_extra(req.project_instructions) + extra + spec_facts.oda_grounding(req.question)
+    extra = _project_extra(req.project_instructions) + extra + spec_facts.oda_grounding(req.question) + _answer_shape_directive(req.question)
     try:    answer = generate_answer(build_prompt(req.question, chunks, guarded=not confident, history=req.history, extra=extra), model, npred)
     except Exception as e: raise HTTPException(503, f"Generation failed: {e}")
 
@@ -1280,7 +1513,7 @@ def query(req: QueryRequest, authorization: Optional[str] = Header(None)):
     srcs = build_sources(chunks)
     conf = _confidence(chunks)
     if not req.history:
-        cache_put(req.question, scope, mode, answer, srcs, conf)
+        cache_put(req.question, scope, mode, answer, srcs, conf, project_instructions=req.project_instructions)
     return QueryResponse(answer=answer, sources=srcs,
                          latency_ms=int((time.time()-start)*1000), chunks_retrieved=len(chunks), confidence=conf)
 
@@ -1302,7 +1535,7 @@ def query_stream(req: QueryRequest, authorization: Optional[str] = Header(None))
     if mode == "fast":
         top_k = min(top_k, FAST_TOP_K)   # fewer chunks → smaller prompt → faster on CPU
     if not req.history and not req.no_cache:
-        hit = cache_get(req.question, scope, mode)
+        hit = cache_get(req.question, scope, mode, project_instructions=req.project_instructions)
         if hit:
             def cached_gen():
                 _log_query(req.question, True, who)
@@ -1313,23 +1546,25 @@ def query_stream(req: QueryRequest, authorization: Optional[str] = Header(None))
                                   "chunks_retrieved": 0}) + "\n"
             return StreamingResponse(cached_gen(), media_type="application/x-ndjson")
 
-    # Deterministic spec-fact short-circuit (see /query) — stream the exact answer.
+    # Deterministic governance-fact resolution (see /query for the full rationale) —
+    # resolve (single-version, comparison, property claim, or corpus-wide aggregation;
+    # resolved, explicitly unresolved, or explicitly refused) via the SAME router
+    # /query uses, then either format raw or run the grounded-generation bridge, then
+    # stream the final (already integrity-validated) answer as a single chunk.
     if scope in ("all", "kb"):
-        fact = spec_facts.answer(req.question)
-        if fact:
-            conf = {"level": "high", "score": 100, "strong": 1}
+        routed = _resolve_governance_route(req, model, npred)
+        if routed:
+            result, conf = routed
             if not req.history and not req.no_cache:
-                cache_put(req.question, scope, mode, fact["answer"], fact["sources"], conf)
-            def fact_gen():
-                _log_query(req.question, True, who)
-                yield json.dumps({"type": "context", "sources": fact["sources"],
-                                  "specs": [fact["tmf"]] if fact.get("tmf") else [],
-                                  "confidence": conf}) + "\n"
-                yield json.dumps({"type": "token", "text": fact["answer"]}) + "\n"
-                yield json.dumps({"type": "done", "sources": fact["sources"], "confidence": conf,
-                                  "latency_ms": int((time.time() - start) * 1000),
-                                  "chunks_retrieved": 1}) + "\n"
-            return StreamingResponse(fact_gen(), media_type="application/x-ndjson")
+                cache_put(req.question, scope, mode, result["answer"], result["sources"], conf,
+                         project_instructions=req.project_instructions)
+            return _fact_stream_response(req, result, conf, start, who)
+        oda_fact = spec_facts.oda_answer(req.question)
+        if oda_fact:
+            if not req.history and not req.no_cache:
+                cache_put(req.question, scope, mode, oda_fact["answer"], oda_fact["sources"], _HIGH_CONF,
+                         project_instructions=req.project_instructions)
+            return _fact_stream_response(req, oda_fact, _HIGH_CONF, start, who)
 
     rq = _retrieval_query(req.question, req.history)
     try:    q_emb = embed_query(rq)
@@ -1341,7 +1576,7 @@ def query_stream(req: QueryRequest, authorization: Optional[str] = Header(None))
         confident, empty = True, ""
     else:
         chunks, confident, empty = retrieve(rq, q_emb, top_k, scope)
-    extra = _project_extra(req.project_instructions) + extra + spec_facts.oda_grounding(req.question)
+    extra = _project_extra(req.project_instructions) + extra + spec_facts.oda_grounding(req.question) + _answer_shape_directive(req.question)
 
     def gen():
         if not chunks:
@@ -1368,7 +1603,7 @@ def query_stream(req: QueryRequest, authorization: Optional[str] = Header(None))
         srcs = [] if acc.lower().strip().startswith(NO_INFO_PREFIX) else build_sources(chunks)
         _log_query(req.question, bool(srcs), who)
         if not req.history:
-            cache_put(req.question, scope, mode, acc, srcs, conf)
+            cache_put(req.question, scope, mode, acc, srcs, conf, project_instructions=req.project_instructions)
         yield json.dumps({"type": "done", "sources": srcs,
                           "confidence": conf if srcs else {},
                           "latency_ms": int((time.time() - start) * 1000),
@@ -1579,6 +1814,89 @@ def oda_components():
     """The official ODA component map (TM Forum v1.0.0 — 35 components in 6 functional
     blocks), enriched with exposed/dependent APIs where reference manifests exist."""
     return oda.catalog()
+
+# ── ODA Component CTK conformance (execution-backed — SEPARATE from schema conformance) ─
+# A distinct conformance mode: resolve the canonical ODA Component contract, run the
+# real TM Forum Component CTK against a DEPLOYED component, and normalize the CTK's own
+# results deterministically. This does NOT touch conformance.py / tmf_profile.py /
+# oda.check_component (the OpenAPI schema engine) — it is a different question ("does the
+# deployed component pass its CTKs?"), not schema comparison.
+class ODACTKConfig(BaseModel):
+    company_name: str = ""
+    product_name: str = ""
+    product_url: str = ""
+    product_version: str = ""
+    headers: dict = {}                     # may include Authorization — redacted before persist/return
+    payloads: dict = {}
+    reject_unauthorized: bool = False
+
+class ODACTKJobReq(BaseModel):
+    component_id: str = "TMFC043"          # Phase 1: TMFC043 golden path only
+    component_version: Optional[str] = None
+    release_name: str = ""                 # deployed component's Helm release (required)
+    namespace: str = "components"
+    run_exposed_optional: bool = False
+    run_dependent_optional: bool = False
+    run_security_optional: bool = False
+    ctkconfig: ODACTKConfig = ODACTKConfig()
+
+def _ctk_req(req: "ODACTKJobReq") -> dict:
+    return {
+        "component_id": req.component_id, "component_version": req.component_version,
+        "release_name": req.release_name, "namespace": req.namespace,
+        "run_exposed_optional": req.run_exposed_optional,
+        "run_dependent_optional": req.run_dependent_optional,
+        "run_security_optional": req.run_security_optional,
+        "ctkconfig": req.ctkconfig.dict(),
+    }
+
+@app.get("/oda/components/{component_id}/contract", tags=["ODA CTK"])
+def oda_component_contract_endpoint(component_id: str):
+    """Deterministic canonical ODA Component contract (mandatory/optional/dependent API
+    requirements + events) from the vendored canonical YAML. No LLM, no RAG. Public/
+    unauthenticated like its sibling GET /oda/components — deterministic, non-secret,
+    stateless data (no job is created, nothing is stored, nothing to own)."""
+    contract = oda_component_contract.resolve_contract(component_id)
+    if contract.get("status") != "RESOLVED":
+        reason = oda_ctk_sanitize.sanitize_reason(contract.get("reason", ""))
+        raise HTTPException(404 if contract.get("status") == "UNSUPPORTED" else 422,
+                            f"{contract.get('status')}: {reason}")
+    return contract
+
+# The 4 endpoints below are stateful and/or execute real infra tooling (subprocess,
+# outbound calls using caller-supplied credentials) — unlike the stateless read above,
+# these require login (Phase 4 audit: they previously had no auth boundary at all,
+# inconsistent with the rest of the authenticated app surface). Job read endpoints are
+# additionally bound to the creating user (or an admin) — see oda_ctk_jobs._owned().
+
+@app.post("/oda/conformance/jobs/validate", tags=["ODA CTK"])
+def oda_ctk_validate(req: ODACTKJobReq, user: dict = Depends(current_user)):
+    """Adapter DRY RUN: resolve the contract, validate config, generate CHANGE_ME.json in
+    an isolated workspace, verify framework files, list expected mandatory CTKs and
+    prerequisites — WITHOUT invoking helm/kubectl/docker/npm or the CTK executor.
+    READY_TO_EXECUTE means ready — NOT ODA-conformant."""
+    return oda_ctk_sanitize.sanitize_dry_run(oda_ctk_jobs.oda_ctk_adapter.dry_run(_ctk_req(req)))
+
+@app.post("/oda/conformance/jobs", tags=["ODA CTK"])
+def oda_ctk_create_job(req: ODACTKJobReq, user: dict = Depends(current_user)):
+    """Create a job and start the REAL CTK execution (background). Returns the job
+    immediately; poll GET /oda/conformance/jobs/{id}. An execution/infra failure is
+    classified honestly as FAILED_EXECUTION / EXECUTION_ERROR — never a conformance FAIL."""
+    return oda_ctk_jobs.create_execution_job(_ctk_req(req), owner_id=user["id"])
+
+@app.get("/oda/conformance/jobs/{job_id}", tags=["ODA CTK"])
+def oda_ctk_get_job(job_id: str, user: dict = Depends(current_user)):
+    job = oda_ctk_jobs.get_job(job_id, requester_id=user["id"], is_admin=(user.get("role") == "admin"))
+    if not job:
+        raise HTTPException(404, "job not found")
+    return job
+
+@app.get("/oda/conformance/jobs/{job_id}/results", tags=["ODA CTK"])
+def oda_ctk_get_results(job_id: str, user: dict = Depends(current_user)):
+    res = oda_ctk_jobs.get_results(job_id, requester_id=user["id"], is_admin=(user.get("role") == "admin"))
+    if not res:
+        raise HTTPException(404, "job not found")
+    return res
 
 # ── Documents ──────────────────────────────────────────────────────────────────
 @app.get("/documents/library")
@@ -2377,6 +2695,16 @@ def refresh_source(req: RefreshSourceReq, background_tasks: BackgroundTasks, _ad
 @app.get("/admin/refresh-kb/status")
 def refresh_kb_status(_admin: dict = Depends(require_admin)):
     return PROCESSING_STATUS.get("__kb_refresh__", {"status": "idle", "chunks": 0})
+
+@app.post("/admin/cache/clear")
+def admin_clear_cache(_admin: dict = Depends(require_admin)):
+    """Development-safe response-cache reset: drops only cached /query and
+    /query/stream answers (answer_cache.json). Use this to force every question
+    through the real, current pipeline again — e.g. after a routing/grounding change,
+    before trusting a live smoke test. Does NOT touch ChromaDB, indexed documents, or
+    conversation history; use /admin/refresh-kb to reindex content instead."""
+    cache_clear()
+    return {"status": "cleared"}
 
 # ── Scheduled auto-refresh ───────────────────────────────────────────────────────
 SCHED_FILE = STORAGE_DIR / "refresh_schedule.json"
