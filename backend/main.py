@@ -36,6 +36,9 @@ import oda_component_contract  # canonical ODA Component contract resolver (exec
 import oda_ctk_jobs   # ODA Component CTK execution jobs (execution-backed conformance)
 import oda_ctk_sanitize   # centralized public-response redaction boundary (Phase 4 audit)
 import spec_facts    # deterministic answers for structured spec-fact questions
+import knowledge_entities   # Knowledge Engine V2 — deterministic entity extraction (Phase 7B)
+import knowledge_link       # Knowledge Engine V2 — corpus inventory + entity linking
+import knowledge_router     # Knowledge Engine V2 — deterministic routing before RAG
 from vectorstore import get_store, reset_store   # backend-agnostic vector store (Chroma today)
 
 _chroma_lock = threading.Lock()   # protects singleton + upsert/query overlap
@@ -70,7 +73,7 @@ CACHE_ENABLED = os.getenv("CACHE_ENABLED", "1").strip().lower() not in ("0", "fa
 # "not required" hedge-detection widened to cover contractions/adverbs/articles
 # ("isn't required", "not actually required", "not a required field") — the narrower
 # version was misreading a correct denial as a false claim and discarding good answers.
-CACHE_PIPELINE_VERSION = os.getenv("CACHE_PIPELINE_VERSION", "4")
+CACHE_PIPELINE_VERSION = os.getenv("CACHE_PIPELINE_VERSION", "5")  # Phase 7B: Knowledge Engine V2 (routing/version/abstention) — invalidates all V1 cached answers
 
 # ── Retrieval tuning ─────────────────────────────────────────────────────────
 TOP_K            = 8      # chunks handed to the LLM
@@ -817,9 +820,9 @@ Shape the answer to the question:
 - "How do I…" or how to call an operation → numbered steps plus a fenced code block with a concrete, runnable example (curl by default, or the language asked for) built from the real path and fields in the context.
 - Anything else → short, scannable bullets or brief paragraphs.
 
-Every specific field name, path, status code, and value must come from the CONTEXT — never invent them — but do explain and connect them in your own words so the answer teaches rather than just lists. Cite inline with the bracketed source number: put [n] right after the fact it backs (combine like [2][3]); cite only sources you used. Synthesize across related chunks. Be confident and decisive: if a relevant source is present, answer it directly and do not claim information is missing. Never open with filler like "Based on the provided context" or "According to the sources".
+Every specific field name, path, status code, and value must come from the CONTEXT — never invent them — but do explain and connect them in your own words so the answer teaches rather than just lists. Cite inline with the bracketed source number: put [n] right after the fact it backs (combine like [2][3]); cite only sources you used. Synthesize across related chunks. Answer confidently ONLY when the CONTEXT clearly supports the specific API, spec, version, field, operation, or capability named in the QUESTION. If the CONTEXT does not contain evidence for the exact thing asked about, say you don't have authoritative evidence for it rather than inferring it from a different, neighbouring, or unrelated API — never fabricate fields, operations, versions, or component relationships to fill a gap. Never open with filler like "Based on the provided context" or "According to the sources".
 
-When asked what fields a resource requires, this almost always means what you must SUBMIT to create one: read the required list from the resource's _Create schema (e.g. ProductOrder_Create → productOrderItem), not the response resource's server-assigned id, not a *Ref or *_Update schema, and not an unrelated EventSubscription/Hub/Event/Error schema. Name the parent object a required field sits on (e.g. each productOrderItem needs an action and a productOffering) when the context shows it, and never answer with a single bare field name when you can explain what it is and where it lives. If two spec versions appear (e.g. 4.0.0 and 5.0.0), answer for the latest and note any notable difference."""
+When asked what fields a resource requires, this almost always means what you must SUBMIT to create one: read the required list from the resource's _Create schema (e.g. ProductOrder_Create → productOrderItem), not the response resource's server-assigned id, not a *Ref or *_Update schema, and not an unrelated EventSubscription/Hub/Event/Error schema. Name the parent object a required field sits on (e.g. each productOrderItem needs an action and a productOffering) when the context shows it, and never answer with a single bare field name when you can explain what it is and where it lives. If the QUESTION names a specific version, answer for THAT major version only and do not substitute another major version's fields. If the CONTEXT mixes versions, state which version your answer reflects; never silently pick "the latest"."""
 
 _GUARD_LINE = """
 
@@ -1273,15 +1276,22 @@ def _rank_adjust(focus: dict, doc: str, dist: float) -> float:
             eff -= LEX_WEIGHT * (hits / len(terms))
     return eff
 
-def retrieve(question: str, q_emb: list, top_k: int, scope: str):
+def retrieve(question: str, q_emb: list, top_k: int, scope: str, hints: dict = None):
     """Shared retrieval for /query and /query/stream.
     Returns (chunks, confident, empty_msg). chunks == [] means nothing relevant;
-    empty_msg holds the user-facing fallback text in that case."""
+    empty_msg holds the user-facing fallback text in that case.
+    `hints` (Phase 7B, from knowledge_router) may carry: spec_ids to seed, a requested
+    major version to ISOLATE (excluding other majors), and canonical_only to keep a
+    named-spec question off ODA-Canvas operator prose."""
     col = get_collection()
     total = col.count()
     if total == 0:
         return [], False, NO_INFO_MSG
 
+    hints          = hints or {}
+    hint_specs     = [s.upper() for s in (hints.get("spec_ids") or [])]
+    hint_major     = hints.get("major")
+    canonical_only = bool(hints.get("canonical_only"))
     added     = [d.get("origin") or d.get("file") for d in load_uploads() if d.get("status") == "indexed"]
     added_set = set(added)
     focus     = _resource_focus(question)
@@ -1310,11 +1320,18 @@ def retrieve(question: str, q_emb: list, top_k: int, scope: str):
         # 1. Spec-targeted retrieval — guarantee named specs are present.
         spec_map = get_spec_map(col)
         spec_ids = detect_spec_ids(question)
+        for s in hint_specs:                          # Phase 7B: router-seeded specs (bare entities, links)
+            if s not in spec_ids:
+                spec_ids.append(s)
         matched  = [s for s in spec_ids if spec_map.get(s)]
         if matched:
             per_spec = max(top_k // len(matched), 2)
             for sid in matched:
                 sfiles = sorted(spec_map[sid])
+                if hint_major is not None:            # Phase 7B: version isolation — drop other majors
+                    vfiles = [f for f in sfiles if knowledge_link.major_of(f) == str(hint_major)]
+                    if vfiles:
+                        sfiles = vfiles
                 hits = col.query(q_emb, min(per_spec * 4, total), where_in=("file", sfiles))
                 cands = [(_rank_adjust(focus, h["document"], h["distance"]), h["document"], h["metadata"], h["distance"])
                          for h in hits if h["distance"] < KB_DIST_MAX]
@@ -1337,6 +1354,11 @@ def retrieve(question: str, q_emb: list, top_k: int, scope: str):
             m = h["metadata"]
             if m.get("origin", "") in added_set:        # user-added sources handled separately above
                 continue
+            cc = knowledge_link.content_class(m.get("file", ""))
+            if cc in ("non_tmf_external", "test_collection"):
+                continue                                # Phase 7B: MEF/postman never rank as canonical evidence
+            if canonical_only and cc == "oda_canvas":
+                continue                                # a named-spec question stays off Canvas operator prose
             if h["distance"] < KB_DIST_MAX:
                 pool.append({"d": h["document"], "m": m, "dist": h["distance"], "upload": False,
                              "eff": _rank_adjust(focus, h["document"], h["distance"])})
@@ -1472,7 +1494,23 @@ def query(req: QueryRequest, authorization: Optional[str] = Header(None)):
     # for a rich explanation, integrity-validated before being returned; any violation
     # falls back to the exact deterministic answer. ODA component questions are
     # unaffected — still answered directly, as before.
+    khints = None
     if scope in ("all", "kb"):
+        # Knowledge Engine V2 (Phase 7B): deterministic ODA-contract routing + honest
+        # abstention run FIRST — a named component/spec question must not be mis-grabbed by
+        # the schema-required-fields router or the fuzzy ODA-mapping engine, and a named
+        # entity must never be answered from a semantically-near unrelated spec.
+        kdec = knowledge_router.route(req.question)
+        if kdec.get("kind") == "answer":
+            return _fact_response_payload(req, scope, mode, start, who,
+                                          {"answer": kdec["answer"], "sources": kdec["sources"]}, _HIGH_CONF)
+        if kdec.get("kind") == "abstain":
+            _log_query(req.question, False, who)
+            return QueryResponse(answer=kdec["answer"], sources=[],
+                                 latency_ms=int((time.time()-start)*1000), chunks_retrieved=0,
+                                 confidence=_LOW_CONF)
+        # Existing deterministic schema-required-fields engine (unchanged) handles
+        # "what mandatory fields does TMF622 require?" — the router deferred those.
         routed = _resolve_governance_route(req, model, npred)
         if routed:
             result, conf = routed
@@ -1480,6 +1518,7 @@ def query(req: QueryRequest, authorization: Optional[str] = Header(None)):
         oda_fact = spec_facts.oda_answer(req.question)
         if oda_fact:
             return _fact_response_payload(req, scope, mode, start, who, oda_fact, _HIGH_CONF)
+        khints = kdec.get("hints")
 
     rq = _retrieval_query(req.question, req.history)
     try:    q_emb = embed_query(rq)
@@ -1491,8 +1530,23 @@ def query(req: QueryRequest, authorization: Optional[str] = Header(None)):
         chunks, extra = plan
         confident, empty = True, ""
     else:
-        try:    chunks, confident, empty = retrieve(rq, q_emb, top_k, scope)
+        try:    chunks, confident, empty = retrieve(rq, q_emb, top_k, scope, hints=khints)
         except Exception as e: raise HTTPException(503, f"Retrieval failed: {e}")
+
+    # Evidence validation (Phase 7B): when the router named specific specs the answer must
+    # be grounded in, refuse rather than answer from unrelated retrieved content.
+    if khints and khints.get("evidence_specs") and chunks:
+        want = {s.upper() for s in khints["evidence_specs"]}
+        got = {(c["metadata"].get("spec_id") or "").upper() for c in chunks}
+        if not (want & got):
+            _log_query(req.question, False, who)
+            return QueryResponse(
+                answer=("I found related material but no authoritative evidence for "
+                        f"{', '.join(sorted(want))} specifically, so I won't answer from a "
+                        "different specification. Try naming the exact API/version, or add the "
+                        "spec on the Documents page."),
+                sources=[], latency_ms=int((time.time()-start)*1000), chunks_retrieved=0,
+                confidence=_LOW_CONF)
 
     if not chunks:
         _log_query(req.question, False, who)

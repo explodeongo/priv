@@ -38,7 +38,7 @@ ok(s43["specification_available"] is True, "TMFC043 specification_available True
 
 s01 = oda.component_status({"code": "TMFC001", "spec_url": "http://x/TMFC001.yaml"}, SUPPORTED)
 ok(s01["supported_execution"] is False, "TMFC001 NOT execution-supported (honest)")
-ok(s01["contract_available"] is False, "TMFC001 has no vendored contract (honest)")
+ok(s01["contract_available"] is True, "TMFC001 now has a vendored contract (Phase 6B corpus) yet stays NON-execution — Contract Available != Execution Ready")
 ok(s01["specification_available"] is True, "TMFC001 spec available (spec_url known)")
 
 # supported_execution must reflect the PASSED-IN set — proving it is not hardcoded to TMFC043.
@@ -50,7 +50,8 @@ ok(none_set["contract_available"] is True, "contract_available independent of th
 
 # contract_available strictly mirrors canonical_path (deterministic filesystem resolution).
 ok(CONTRACT.canonical_path("TMFC043") is not None, "canonical_path resolves the vendored TMFC043 spec")
-ok(CONTRACT.canonical_path("TMFC001") is None, "canonical_path returns None for a non-vendored component")
+ok(CONTRACT.canonical_path("TMFC001") is not None, "canonical_path resolves the now-vendored TMFC001 spec (Phase 6B)")
+ok(CONTRACT.canonical_path("TMFC999") is None, "canonical_path returns None for a truly non-vendored component id")
 unknown = oda.component_status({"code": "TMFC999", "spec_url": "http://x"}, SUPPORTED)
 ok(unknown["contract_available"] is False and unknown["supported_execution"] is False,
    "unknown component: no contract, no execution")
@@ -77,7 +78,9 @@ ok(all({"supported_execution", "contract_available", "specification_available"} 
 exec_ready = sorted(c["code"] for c in comps if c["supported_execution"])
 contract_ok = sorted(c["code"] for c in comps if c["contract_available"])
 ok(exec_ready == sorted(SUPPORTED), "exactly the authoritative supported set is execution-ready")
-ok(contract_ok == ["TMFC043"], "only TMFC043 advertises an available contract today")
+ok(exec_ready == ["TMFC043"], "execution stays TMFC043-only after Phase 6B (Contract != Execution)")
+ok(contract_ok == sorted(c["code"] for c in comps) and len(contract_ok) == 35,
+   "Phase 6B: all 35 catalog entries now advertise a vendored contract")
 ok(all(c["specification_available"] for c in comps), "all catalog components have a known specification")
 # No component ever fabricates execution without also being in the authoritative gate.
 ok(not any(c["supported_execution"] and c["code"] not in SUPPORTED for c in comps),
