@@ -1,0 +1,340 @@
+{
+  "_comment": "Provenance + inventory for the vendored canonical ODA Component specifications. Identity (id/version/functionalBlock) is read from each YAML's spec.componentMetadata, NOT from filenames. Regenerate deterministically.",
+  "source": {
+    "repository": "https://github.com/tmforum-rand/TMForum-ODA-Ready-for-publication",
+    "ref": "v1.0.0 (branch)",
+    "commit": "cfdeae7016aea13c9752d1f6395f9a252c786ae3",
+    "commit_date": "2026-06-12T10:04:41+00:00",
+    "commit_subject": "Updating api index from GitHub Actions",
+    "retrieved": "2026-07-10",
+    "path_pattern": "{code}-{short}/Specification/{code}-{short}.yaml",
+    "note": "v1.0.0 is a branch, not an immutable tag; the commit SHA above is the exact branch HEAD observed at retrieval and is the immutable provenance anchor. Only Specification/*.yaml canonical component specs were vendored \u2014 no CTK Helm charts, ComponentRI, Reports, or generated files."
+  },
+  "corpus": {
+    "component_count": 35,
+    "distinct_ids": 35,
+    "distinct_functional_blocks": [
+      "CoreCommerce",
+      "IntelligenceManagement",
+      "PartyManagement",
+      "Production"
+    ]
+  },
+  "components": [
+    {
+      "id": "TMFC001",
+      "filename": "TMFC001-ProductCatalogManagement.yaml",
+      "sha256": "1c1bbfe8a9e62984f8647ef3730a47cd8857bf550d7ead8d9f46db528429c228",
+      "version": "2.1.2",
+      "name": "ProductCatalogManagement",
+      "functionalBlock": "CoreCommerce",
+      "bytes": 16950
+    },
+    {
+      "id": "TMFC002",
+      "filename": "TMFC002-ProductOrderCaptureAndValidation.yaml",
+      "sha256": "38227a5d700320edca525adad29bdc741ee1e74b2c82de17509aad16c9d4432f",
+      "version": "2.1.0",
+      "name": "ProductOrderCaptureAndValidation",
+      "functionalBlock": "CoreCommerce",
+      "bytes": 20176
+    },
+    {
+      "id": "TMFC003",
+      "filename": "TMFC003-ProductOrderDeliveryOrchestrationAndManagement.yaml",
+      "sha256": "2cfbf7d0b1e7d0e1e9be9cf449077c30ab441004c9ceed523557e384b569bd38",
+      "version": "1.1.1",
+      "name": "ProductOrderDeliveryOrchestrationAndManagement",
+      "functionalBlock": "CoreCommerce",
+      "bytes": 14727
+    },
+    {
+      "id": "TMFC005",
+      "filename": "TMFC005-ProductInventory.yaml",
+      "sha256": "caada92fe59eeb3fae80b7e7d6f0efb4a2e6b5dd6c06c844d8efbe32d07fb7c0",
+      "version": "1.0.4",
+      "name": "ProductInventory",
+      "functionalBlock": "CoreCommerce",
+      "bytes": 17261
+    },
+    {
+      "id": "TMFC006",
+      "filename": "TMFC006-ServiceCatalogManagement.yaml",
+      "sha256": "4fdb6359d29eb7a6e502b218ad836aacaef57d187a82b8cd143a35ed8fb117cd",
+      "version": "1.2.0",
+      "name": "ServiceCatalogManagement",
+      "functionalBlock": "Production",
+      "bytes": 12946
+    },
+    {
+      "id": "TMFC007",
+      "filename": "TMFC007-ServiceOrderManagement.yaml",
+      "sha256": "bd2bac0a7db7c18a0dd43c421a06c9680f514d0e6899785dc758ffd11e7079d8",
+      "version": "2.0.0",
+      "name": "ServiceOrderManagement",
+      "functionalBlock": "Production",
+      "bytes": 18551
+    },
+    {
+      "id": "TMFC008",
+      "filename": "TMFC008-ServiceInventory.yaml",
+      "sha256": "c5b79c6e4726644e9a723b0cdc7be300bf1432020a55602bee835fbde6a80ba1",
+      "version": "1.2.0",
+      "name": "ServiceInventory",
+      "functionalBlock": "Production",
+      "bytes": 14003
+    },
+    {
+      "id": "TMFC009",
+      "filename": "TMFC009-ServiceQualificationManagement.yaml",
+      "sha256": "d9e26d82203a45d5f05e23786eb49e4c9a061053381a2985601c4f3f5210abb6",
+      "version": "1.1.0",
+      "name": "ServiceQualificationManagement",
+      "functionalBlock": "Production",
+      "bytes": 9493
+    },
+    {
+      "id": "TMFC010",
+      "filename": "TMFC010-ResourceCatalogManagement.yaml",
+      "sha256": "85dbf73df642dc2276facb73f5553c78defeeaa80a177ab4bf2e6835818a909a",
+      "version": "1.3.2",
+      "name": "ResourceCatalogManagement",
+      "functionalBlock": "Production",
+      "bytes": 11763
+    },
+    {
+      "id": "TMFC011",
+      "filename": "TMFC011-ResourceOrderManagement.yaml",
+      "sha256": "9a315ad6e3ccc4958d91a9f26471748ef239dac0e65e8406e6c042ee66a294a2",
+      "version": "1.2.0",
+      "name": "ResourceOrderManagement",
+      "functionalBlock": "Production",
+      "bytes": 13751
+    },
+    {
+      "id": "TMFC012",
+      "filename": "TMFC012-ResourceInventory.yaml",
+      "sha256": "db15e15d55789566e0c0439f68b36ab9db8dec718ac11ca3cb8d780c638f7699",
+      "version": "2.2.0",
+      "name": "ResourceInventory",
+      "functionalBlock": "Production",
+      "bytes": 15561
+    },
+    {
+      "id": "TMFC014",
+      "filename": "TMFC014-LocationManagement.yaml",
+      "sha256": "550d9bafc8f9db8f44c63b42d12077f37521a1c0d7158d7434669b3482838811",
+      "version": "1.2.1",
+      "name": "LocationManagement",
+      "functionalBlock": "Production",
+      "bytes": 7396
+    },
+    {
+      "id": "TMFC020",
+      "filename": "TMFC020-DigitalIdentityManagement.yaml",
+      "sha256": "0e202a57126bb1a211d07f9404df487ff5566f9ec4bcd4b269b64e05b57883f0",
+      "version": "1.1.0",
+      "name": "DigitalIdentityManagement",
+      "functionalBlock": "PartyManagement",
+      "bytes": 6326
+    },
+    {
+      "id": "TMFC022",
+      "filename": "TMFC022-PartyPrivacyManagement.yaml",
+      "sha256": "601ec1339cc598f8092f05f9249b964074d66f33e7538c36b8a76fe8a53dc033",
+      "version": "1.1.0",
+      "name": "PartyPrivacyManagement",
+      "functionalBlock": "PartyManagement",
+      "bytes": 6155
+    },
+    {
+      "id": "TMFC023",
+      "filename": "TMFC023-PartyInteractionManagement.yaml",
+      "sha256": "fdcfac536fab8ce31f69f2392506da7d9aacb0df38011bff2ed8c4615bfcf01e",
+      "version": "1.1.2",
+      "name": "PartyInteractionManagement",
+      "functionalBlock": "PartyManagement",
+      "bytes": 11964
+    },
+    {
+      "id": "TMFC024",
+      "filename": "TMFC024-BillingAccountManagement.yaml",
+      "sha256": "ced2b05760ae2e85565a9eb8f2b14d644d41b31a40f82d3af4410a155196338a",
+      "version": "2.1.1",
+      "name": "BillingAccountManagement",
+      "functionalBlock": "PartyManagement",
+      "bytes": 8113
+    },
+    {
+      "id": "TMFC027",
+      "filename": "TMFC027-ProductConfigurator.yaml",
+      "sha256": "2e8ec86914ab2b9f812dfd71109e13ed4e2fb76864e58568f6a1ec437fc03c30",
+      "version": "2.1.1",
+      "name": "ProductConfigurator",
+      "functionalBlock": "CoreCommerce",
+      "bytes": 14463
+    },
+    {
+      "id": "TMFC028",
+      "filename": "TMFC028-PartyManagement.yaml",
+      "sha256": "7716cb8571137be6ec30052aa9bcbcd4157dc519f596243004f97c8503140c1b",
+      "version": "2.1.0",
+      "name": "PartyManagement",
+      "functionalBlock": "PartyManagement",
+      "bytes": 9344
+    },
+    {
+      "id": "TMFC029",
+      "filename": "TMFC029-PaymentManagement.yaml",
+      "sha256": "ac691f8704f8bfcc0189582c5d1f8b8138088de199890f302c4cadb7a5e658c7",
+      "version": "1.2.2",
+      "name": "PaymentManagement",
+      "functionalBlock": "PartyManagement",
+      "bytes": 9711
+    },
+    {
+      "id": "TMFC030",
+      "filename": "TMFC030-BillGeneration.yaml",
+      "sha256": "b6f1e9a2f0f1bb348268ae81fbe4a2d6162808c02b4e1592043751429bbcc75e",
+      "version": "2.0.0",
+      "name": "BillGenerationManagement",
+      "functionalBlock": "PartyManagement",
+      "bytes": 9425
+    },
+    {
+      "id": "TMFC031",
+      "filename": "TMFC031-BillCalculation.yaml",
+      "sha256": "97e2d8ca8feeb8ea8c7f6bd0dc02c6c7a133b4f75fe319b155fdb517a7a80645",
+      "version": "3.0.0",
+      "name": "BillCalculation",
+      "functionalBlock": "CoreCommerce",
+      "bytes": 7464
+    },
+    {
+      "id": "TMFC035",
+      "filename": "TMFC035-PermissionsManagement.yaml",
+      "sha256": "de0ec6bd6eae8ef0f00bd0918e31442e516f0d9e7cf9945defcf5f9a4019e58b",
+      "version": "1.1.1",
+      "name": "PermissionsManagement",
+      "functionalBlock": "PartyManagement",
+      "bytes": 7763
+    },
+    {
+      "id": "TMFC036",
+      "filename": "TMFC036-LeadAndOpportunityManagement.yaml",
+      "sha256": "61b65d3333f07ab46efc8b0cab042ec47a9c99991a6a6602bc6ab7b639c32d89",
+      "version": "1.2.0",
+      "name": "LeadAndOpportunityManagement",
+      "functionalBlock": "PartyManagement",
+      "bytes": 14180
+    },
+    {
+      "id": "TMFC037",
+      "filename": "TMFC037-ServicePerformanceManagement.yaml",
+      "sha256": "83605478c24470f754f6975628bce77c78bd425c5eb82613d9e4e390edb2cb39",
+      "version": "1.2.0",
+      "name": "ServicePerformanceManagement",
+      "functionalBlock": "IntelligenceManagement",
+      "bytes": 13260
+    },
+    {
+      "id": "TMFC038",
+      "filename": "TMFC038-ResourcePerformanceManagement.yaml",
+      "sha256": "7192bff1e0207bd90f6444ccd3c9ac0006bd9cfb086248985f28351cbb75eba0",
+      "version": "1.2.0",
+      "name": "ResourcePerformanceManagement",
+      "functionalBlock": "IntelligenceManagement",
+      "bytes": 13258
+    },
+    {
+      "id": "TMFC039",
+      "filename": "TMFC039-AgreementManagement.yaml",
+      "sha256": "9150770c74939a14c4cb972a286aa6ed7de61c7f7d62fae858b8bfb7fba26b0f",
+      "version": "1.1.0",
+      "name": "AgreementManagement",
+      "functionalBlock": "PartyManagement",
+      "bytes": 9322
+    },
+    {
+      "id": "TMFC040",
+      "filename": "TMFC040-ProductUsageManagement.yaml",
+      "sha256": "c73f297f0a6944f33c372f3c7c7490db809c3c15559e76e6cddd0b94bb6300e2",
+      "version": "1.1.0",
+      "name": "ProductUsageManagement",
+      "functionalBlock": "CoreCommerce",
+      "bytes": 10571
+    },
+    {
+      "id": "TMFC041",
+      "filename": "TMFC041-AnomalyManagement.yaml",
+      "sha256": "82b07cf920b275bacc6e2c19e5e46d4e742bad03d59ec1987d696046aee8f469",
+      "version": "1.1.0",
+      "name": "AnomalyManagement",
+      "functionalBlock": "IntelligenceManagement",
+      "bytes": 5647
+    },
+    {
+      "id": "TMFC043",
+      "filename": "TMFC043-FaultManagement.yaml",
+      "sha256": "c1979d925c5620926449a0bfe1cb71f62fed44ce7801a9007f08aa588a935a0a",
+      "version": "1.0.0",
+      "name": "FaultManagement",
+      "functionalBlock": "Production",
+      "bytes": 14536
+    },
+    {
+      "id": "TMFC046",
+      "filename": "TMFC046-WorkforceManagement.yaml",
+      "sha256": "f365dc1460a29d0f532cac7b330edc642d4a96ad577f55f00f241ab0566158af",
+      "version": "1.1.0",
+      "name": "WorkforceManagement",
+      "functionalBlock": "Production",
+      "bytes": 7981
+    },
+    {
+      "id": "TMFC050",
+      "filename": "TMFC050-ProductRecommendation.yaml",
+      "sha256": "eecc9220d11e3b45752d38a2283244bfde2142668879ac510cf426e524a557dc",
+      "version": "1.0.0",
+      "name": "ProductRecommendationManagement",
+      "functionalBlock": "IntelligenceManagement",
+      "bytes": 12900
+    },
+    {
+      "id": "TMFC054",
+      "filename": "TMFC054-ProductTestManagement.yaml",
+      "sha256": "21bf6dcad340285d573262bf53a71cc517dec3785ac3fbeb4fba61c09814cc51",
+      "version": "1.0.0",
+      "name": "ProductTestManagement",
+      "functionalBlock": "CoreCommerce",
+      "bytes": 10299
+    },
+    {
+      "id": "TMFC055",
+      "filename": "TMFC055-ServiceTestManagement.yaml",
+      "sha256": "d31f40f88042e7a2bdbc8e898d26e9f843868a9a070b03b3dbaf257187b3a364",
+      "version": "1.0.0",
+      "name": "ServiceTestManagement",
+      "functionalBlock": "Production",
+      "bytes": 9802
+    },
+    {
+      "id": "TMFC061",
+      "filename": "TMFC061-WorkOrderManagement.yaml",
+      "sha256": "4fd606c9e81280368879cd8e55e57936174f8fab68d6be8db32f85f1bf88e417",
+      "version": "1.0.0",
+      "name": "WorkOrderManagement",
+      "functionalBlock": "Production",
+      "bytes": 14231
+    },
+    {
+      "id": "TMFC062",
+      "filename": "TMFC062-ResourceConfigurationandActivation.yaml",
+      "sha256": "151a61558a31fed99c69c71b9e4aad71bdb722f3f99674ae5f194623f102475a",
+      "version": "1.0.0",
+      "name": "ResourceConfigurationandActivation",
+      "functionalBlock": "Production",
+      "bytes": 7425
+    }
+  ]
+}
