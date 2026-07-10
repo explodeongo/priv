@@ -2,7 +2,7 @@
 import { useState, useRef, useEffect, Fragment } from "react";
 import AppShell from "../components/AppShell";
 import { useToast } from "../components/Toast";
-import ODAComponentCTK from "./oda/ODAComponentCTK";
+import ODACatalogFlow from "./oda/ODACatalogFlow";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -192,8 +192,8 @@ export default function ConformancePage() {
         <main className="flex-1 overflow-y-auto px-4 py-8">
           <div className="max-w-3xl mx-auto">
 
-            {/* ── ODA Component CTK (execution-backed conformance) ── */}
-            {mode === "odactk" && <ODAComponentCTK />}
+            {/* ── ODA Component Catalog → details → existing execution UI (Phase 6A) ── */}
+            {mode === "odactk" && <ODACatalogFlow />}
 
             {/* ── Upload ── */}
             {mode !== "odactk" && !report && !portfolio && (

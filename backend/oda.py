@@ -17,6 +17,7 @@ import os
 import re
 
 import conformance
+import oda_component_contract
 import tmf_profile
 
 try:
@@ -220,6 +221,30 @@ def catalog() -> dict:
         c["spec_url"] = data["spec_url_pattern"].replace("{code}", c["code"]).replace("{short}", c["short"])
     _CATALOG = data
     return data
+
+
+def component_status(component: dict, supported_execution_ids=None) -> dict:
+    """Derived availability flags for one catalog component — NEVER hardcoded.
+
+    • specification_available: SynaptDI knows a canonical spec location for the component
+      (every catalog member carries a spec_url; also true when a spec is vendored locally).
+    • contract_available: a canonical Component YAML is vendored and locally resolvable
+      (oda_component_contract.canonical_path) — today only where a spec has been vendored.
+    • supported_execution: execution-backed CTK is enabled for the component. The
+      authoritative set is passed in by the caller (oda_ctk_adapter.SUPPORTED_COMPONENTS);
+      this module never keeps a second copy of it.
+
+    Pure and side-effect-free apart from a filesystem existence check — the verdict
+    engine, adapter, jobs and execution flow are untouched. Unit-tested in
+    test_oda_catalog.py."""
+    code = (component.get("code") or "").upper()
+    contract_available = oda_component_contract.canonical_path(code) is not None
+    supported = supported_execution_ids or set()
+    return {
+        "specification_available": bool(component.get("spec_url")) or contract_available,
+        "contract_available": contract_available,
+        "supported_execution": code in supported,
+    }
 
 
 if __name__ == "__main__":

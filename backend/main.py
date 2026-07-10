@@ -1812,8 +1812,15 @@ def conformance_component(req: ConformanceFixReq):
 @app.get("/oda/components", tags=["ODA"])
 def oda_components():
     """The official ODA component map (TM Forum v1.0.0 — 35 components in 6 functional
-    blocks), enriched with exposed/dependent APIs where reference manifests exist."""
-    return oda.catalog()
+    blocks), enriched with exposed/dependent APIs where reference manifests exist. Each
+    component additionally carries DERIVED availability flags — specification_available,
+    contract_available, supported_execution — computed from the authoritative backend
+    (the adapter's execution gate + the vendored canonical specs), never hardcoded. This
+    is a read-only catalog view; it does not touch the CTK execution flow or verdict."""
+    cat = oda.catalog()
+    supported = oda_ctk_jobs.oda_ctk_adapter.SUPPORTED_COMPONENTS
+    components = [{**c, **oda.component_status(c, supported)} for c in cat.get("components", [])]
+    return {**cat, "components": components}
 
 # ── ODA Component CTK conformance (execution-backed — SEPARATE from schema conformance) ─
 # A distinct conformance mode: resolve the canonical ODA Component contract, run the
