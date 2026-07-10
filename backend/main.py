@@ -40,6 +40,7 @@ import knowledge_entities   # Knowledge Engine V2 — deterministic entity extra
 import knowledge_link       # Knowledge Engine V2 — corpus inventory + entity linking
 import knowledge_router     # Knowledge Engine V2 — deterministic routing before RAG
 from vectorstore import get_store, reset_store   # backend-agnostic vector store (Chroma today)
+import vectorstore   # Phase 7C: read the active/default knowledge collection for startup reporting
 
 _chroma_lock = threading.Lock()   # protects singleton + upsert/query overlap
 
@@ -397,6 +398,21 @@ def startup_init():
     # singleton. ChromaDB's PersistentClient loads the persisted HNSW index on
     # open, so the very first query already sees the full corpus (verified).
     print("[startup] SynaptDI ready — ChromaDB opens on first request", flush=True)
+    # Phase 7C: report the ACTIVE knowledge collection explicitly. axiom_v2 is the product
+    # default; an explicit VECTOR_COLLECTION override is reported as such. Never silently
+    # pretend V2 is active when the collection is empty/missing.
+    try:
+        _n = get_collection().count()
+        _src = "explicit VECTOR_COLLECTION override" if vectorstore.COLLECTION_IS_EXPLICIT else "default"
+        print(f"[startup] Knowledge collection: {vectorstore.COLLECTION} ({_n} chunks) [{_src}]", flush=True)
+        if _n == 0:
+            print(f"[startup] DEGRADED: collection '{vectorstore.COLLECTION}' is EMPTY — "
+                  f"knowledge retrieval will return no evidence. Build it (ingest_v2.py for "
+                  f"axiom_v2) or set VECTOR_COLLECTION to a populated collection. NOT falling "
+                  f"back silently.", flush=True)
+    except Exception as e:
+        print(f"[startup] DEGRADED: could not open knowledge collection "
+              f"'{vectorstore.COLLECTION}': {e}", flush=True)
     if os.getenv("WARM_MODELS", "1") != "0":
         threading.Thread(target=_warm_models, daemon=True).start()
     threading.Thread(target=_scheduler_loop, daemon=True).start()   # scheduled KB auto-refresh
@@ -1189,14 +1205,17 @@ def health():
         r      = requests.get(f"{OLLAMA_URL}/api/tags", timeout=5)
         models = [m["name"] for m in r.json().get("models", [])]
         return {"status":"ok","chunks_indexed":col.count(),"ollama_models":models,
-                "llm_model":LLM_MODEL,"embed_model":EMBED_MODEL}
+                "llm_model":LLM_MODEL,"embed_model":EMBED_MODEL,
+                "collection":vectorstore.COLLECTION,
+                "collection_source":("explicit" if vectorstore.COLLECTION_IS_EXPLICIT else "default")}
     except Exception as e:
         raise HTTPException(503, str(e))
 
 @app.get("/stats")
 def stats():
     col = get_collection()
-    return {"chunks_indexed": col.count(), "collection": "axiom_v1"}
+    return {"chunks_indexed": col.count(), "collection": vectorstore.COLLECTION,
+            "collection_source": ("explicit" if vectorstore.COLLECTION_IS_EXPLICIT else "default")}
 
 @app.get("/coverage")
 def coverage():
@@ -1328,10 +1347,10 @@ def retrieve(question: str, q_emb: list, top_k: int, scope: str, hints: dict = N
             per_spec = max(top_k // len(matched), 2)
             for sid in matched:
                 sfiles = sorted(spec_map[sid])
-                if hint_major is not None:            # Phase 7B: version isolation — drop other majors
-                    vfiles = [f for f in sfiles if knowledge_link.major_of(f) == str(hint_major)]
-                    if vfiles:
-                        sfiles = vfiles
+                if hint_major is not None:            # Phase 7B/7C: version isolation — drop other majors
+                    sfiles = [f for f in sfiles if knowledge_link.major_of(f) == str(hint_major)]
+                    if not sfiles:
+                        continue                       # requested major absent → no evidence (never fall back)
                 hits = col.query(q_emb, min(per_spec * 4, total), where_in=("file", sfiles))
                 cands = [(_rank_adjust(focus, h["document"], h["distance"]), h["document"], h["metadata"], h["distance"])
                          for h in hits if h["distance"] < KB_DIST_MAX]
@@ -1457,6 +1476,66 @@ def stream_ollama(prompt: str, model: str = "", num_predict: int = DEEP_NUM_PRED
     finally:
         _llm_sem.release()
 
+# ── Phase 7C: generic evidence-entailment guards (no hardcoded concepts) ──────────────
+# A "which/what TMF API defines/represents X" question, when no exact entity was resolved,
+# must NOT be answered from a mere lexical neighbour (e.g. "cryptocurrency wallets" matching
+# a payment "DigitalWallet" doc). Require every distinctive concept term of the question to
+# actually appear in the retrieved canonical evidence; if a concept is absent, abstain.
+_DEFINE_INTENT = re.compile(
+    r"\b(which|what)\b[^?]{0,60}\b(api|apis|specification|spec|standard)\b"
+    r"|\b(define[sd]?|models?|represent[sd]?)\b", re.I)
+_PREMISE_STOP = {
+    "which", "what", "does", "tmf", "tmforum", "forum", "api", "apis", "spec", "specification",
+    "standard", "define", "defines", "definition", "model", "models", "manage", "manages",
+    "handle", "handles", "represent", "represents", "provide", "provides", "there", "this",
+    "that", "exist", "exists", "have", "with", "from", "about", "used", "using", "should",
+    "would", "could", "your", "mine", "real", "actual", "official", "form", "forums"}
+
+
+def _premise_terms(question: str) -> list:
+    return [t for t in re.findall(r"[a-z]{4,}", (question or "").lower()) if t not in _PREMISE_STOP]
+
+
+def _false_premise_abstention(question: str, chunks: list, khints: Optional[dict]):
+    """Return an abstention string when a define/relation question names a concept that is
+    ABSENT from the retrieved evidence (only a lexical near-neighbour matched); else None."""
+    if khints and khints.get("evidence_specs"):
+        return None                                  # an exact entity was resolved — not this guard
+    if not _DEFINE_INTENT.search(question or ""):
+        return None
+    terms = _premise_terms(question)
+    if not terms:
+        return None
+    blob = " ".join((c.get("document") or "").lower() for c in chunks)
+    missing = [t for t in terms
+               if t not in blob and (t[:-1] if t.endswith("s") else t + "s") not in blob and t.rstrip("s") not in blob]
+    if missing:
+        return (f"I don't have authoritative TM Forum specification evidence that any API "
+                f"represents **{' '.join(missing)}** — the retrieved material is only a lexical "
+                f"neighbour, not a specification that defines that concept, so I won't affirm it.")
+    return None
+
+
+def _spec_identity_extra(khints: Optional[dict], chunks: list) -> str:
+    """When a bare entity linked to an owning spec (e.g. 'fault'/'alarm' → TMF642) and that
+    spec is actually present in the evidence, instruct the generator to state the TMF spec
+    identity precisely. Generic — driven by the linked spec_id, not a hardcoded phrase."""
+    if not khints:
+        return ""
+    specs = khints.get("evidence_specs") or khints.get("spec_ids")
+    if not specs:
+        return ""
+    got = {(c["metadata"].get("spec_id") or "").upper() for c in chunks}
+    named = [s for s in specs if s.upper() in got]
+    if not named:
+        return ""
+    schema = khints.get("schema")
+    obj = f"the '{schema}' resource" if schema else "this topic"
+    return (f"\n\nThe question concerns {obj}, which the retrieved canonical evidence attributes to "
+            f"the {named[0]} TM Forum specification. State that specification identity ({named[0]}) "
+            f"explicitly and precisely in your answer; do not give a generic description.")
+
+
 @app.post("/query", response_model=QueryResponse, tags=["Knowledge"])
 def query(req: QueryRequest, authorization: Optional[str] = Header(None)):
     who = optional_user_email(authorization)
@@ -1501,6 +1580,7 @@ def query(req: QueryRequest, authorization: Optional[str] = Header(None)):
         # the schema-required-fields router or the fuzzy ODA-mapping engine, and a named
         # entity must never be answered from a semantically-near unrelated spec.
         kdec = knowledge_router.route(req.question)
+        khints = kdec.get("hints")     # capture early — used by the version guard below
         if kdec.get("kind") == "answer":
             return _fact_response_payload(req, scope, mode, start, who,
                                           {"answer": kdec["answer"], "sources": kdec["sources"]}, _HIGH_CONF)
@@ -1509,16 +1589,24 @@ def query(req: QueryRequest, authorization: Optional[str] = Header(None)):
             return QueryResponse(answer=kdec["answer"], sources=[],
                                  latency_ms=int((time.time()-start)*1000), chunks_retrieved=0,
                                  confidence=_LOW_CONF)
-        # Existing deterministic schema-required-fields engine (unchanged) handles
-        # "what mandatory fields does TMF622 require?" — the router deferred those.
+        # Existing deterministic schema-required-fields engine handles "what mandatory fields
+        # does TMF622 require?". Phase 7C version guard: if the user asked for an EXPLICIT major
+        # but governance resolves a DIFFERENT major (it defaults to a single version), do NOT
+        # return a wrong-version fact — fall through to version-isolated RAG for the asked major.
         routed = _resolve_governance_route(req, model, npred)
         if routed:
-            result, conf = routed
-            return _fact_response_payload(req, scope, mode, start, who, result, conf)
+            req_major = str(khints["major"]) if (khints and khints.get("major") is not None) else None
+            if req_major is not None:
+                _rf = spec_facts.required_fields_fact(req.question)
+                _rv = re.search(r"(\d+)", str((_rf or {}).get("version") or "")) if _rf else None
+                if _rv and _rv.group(1) != req_major:
+                    routed = None      # governance can't honour the requested version → RAG
+            if routed:
+                result, conf = routed
+                return _fact_response_payload(req, scope, mode, start, who, result, conf)
         oda_fact = spec_facts.oda_answer(req.question)
         if oda_fact:
             return _fact_response_payload(req, scope, mode, start, who, oda_fact, _HIGH_CONF)
-        khints = kdec.get("hints")
 
     rq = _retrieval_query(req.question, req.history)
     try:    q_emb = embed_query(rq)
@@ -1553,7 +1641,15 @@ def query(req: QueryRequest, authorization: Optional[str] = Header(None)):
         return QueryResponse(answer=empty, sources=[],
                              latency_ms=int((time.time()-start)*1000), chunks_retrieved=0)
 
-    extra = _project_extra(req.project_instructions) + extra + spec_facts.oda_grounding(req.question) + _answer_shape_directive(req.question)
+    # Phase 7C: false-premise / lexical-neighbour guard (generic) — abstain before generating.
+    fp = _false_premise_abstention(req.question, chunks, khints)
+    if fp:
+        _log_query(req.question, False, who)
+        return QueryResponse(answer=fp, sources=[], latency_ms=int((time.time()-start)*1000),
+                             chunks_retrieved=0, confidence=_LOW_CONF)
+
+    ident = _spec_identity_extra(khints, chunks)   # Phase 7C: precise spec-identity grounding
+    extra = _project_extra(req.project_instructions) + extra + ident + spec_facts.oda_grounding(req.question) + _answer_shape_directive(req.question)
     try:    answer = generate_answer(build_prompt(req.question, chunks, guarded=not confident, history=req.history, extra=extra), model, npred)
     except Exception as e: raise HTTPException(503, f"Generation failed: {e}")
 
@@ -1605,14 +1701,34 @@ def query_stream(req: QueryRequest, authorization: Optional[str] = Header(None))
     # resolved, explicitly unresolved, or explicitly refused) via the SAME router
     # /query uses, then either format raw or run the grounded-generation bridge, then
     # stream the final (already integrity-validated) answer as a single chunk.
+    khints = None
     if scope in ("all", "kb"):
+        # Knowledge Engine V2 (Phase 7C: streaming path mirrors /query so the chat UI gets
+        # the same deterministic routing, abstention, version isolation and evidence gating).
+        kdec = knowledge_router.route(req.question)
+        khints = kdec.get("hints")
+        if kdec.get("kind") == "answer":
+            ans = {"answer": kdec["answer"], "sources": kdec["sources"]}
+            if not req.history and not req.no_cache:
+                cache_put(req.question, scope, mode, ans["answer"], ans["sources"], _HIGH_CONF,
+                         project_instructions=req.project_instructions)
+            return _fact_stream_response(req, ans, _HIGH_CONF, start, who)
+        if kdec.get("kind") == "abstain":
+            return _fact_stream_response(req, {"answer": kdec["answer"], "sources": []}, _LOW_CONF, start, who)
         routed = _resolve_governance_route(req, model, npred)
         if routed:
-            result, conf = routed
-            if not req.history and not req.no_cache:
-                cache_put(req.question, scope, mode, result["answer"], result["sources"], conf,
-                         project_instructions=req.project_instructions)
-            return _fact_stream_response(req, result, conf, start, who)
+            req_major = str(khints["major"]) if (khints and khints.get("major") is not None) else None
+            if req_major is not None:
+                _rf = spec_facts.required_fields_fact(req.question)
+                _rv = re.search(r"(\d+)", str((_rf or {}).get("version") or "")) if _rf else None
+                if _rv and _rv.group(1) != req_major:
+                    routed = None
+            if routed:
+                result, conf = routed
+                if not req.history and not req.no_cache:
+                    cache_put(req.question, scope, mode, result["answer"], result["sources"], conf,
+                             project_instructions=req.project_instructions)
+                return _fact_stream_response(req, result, conf, start, who)
         oda_fact = spec_facts.oda_answer(req.question)
         if oda_fact:
             if not req.history and not req.no_cache:
@@ -1629,8 +1745,17 @@ def query_stream(req: QueryRequest, authorization: Optional[str] = Header(None))
         chunks, extra = plan
         confident, empty = True, ""
     else:
-        chunks, confident, empty = retrieve(rq, q_emb, top_k, scope)
-    extra = _project_extra(req.project_instructions) + extra + spec_facts.oda_grounding(req.question) + _answer_shape_directive(req.question)
+        chunks, confident, empty = retrieve(rq, q_emb, top_k, scope, hints=khints)
+    # Phase 7C: evidence + false-premise gates (mirror /query) before streaming generation.
+    if khints and khints.get("evidence_specs") and chunks:
+        if not ({s.upper() for s in khints["evidence_specs"]} & {(c["metadata"].get("spec_id") or "").upper() for c in chunks}):
+            chunks = []
+    if chunks:
+        _fp = _false_premise_abstention(req.question, chunks, khints)
+        if _fp:
+            return _fact_stream_response(req, {"answer": _fp, "sources": []}, _LOW_CONF, start, who)
+    _ident = _spec_identity_extra(khints, chunks)
+    extra = _project_extra(req.project_instructions) + extra + _ident + spec_facts.oda_grounding(req.question) + _answer_shape_directive(req.question)
 
     def gen():
         if not chunks:

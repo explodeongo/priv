@@ -20,7 +20,13 @@ import threading
 from abc import ABC, abstractmethod
 from typing import Optional, List, Tuple, TypedDict
 
-COLLECTION  = os.environ.get("VECTOR_COLLECTION", "axiom_v1")
+# Phase 7C: axiom_v2 (Knowledge Engine V2 — version-tagged, structure-aware, MEF/postman
+# excluded) is the DEFAULT product knowledge collection. An explicit VECTOR_COLLECTION
+# override is still honoured (e.g. VECTOR_COLLECTION=axiom_v1 for rollback). axiom_v1 is
+# preserved on disk and never rebuilt/deleted by this default change.
+DEFAULT_COLLECTION = "axiom_v2"
+COLLECTION  = os.environ.get("VECTOR_COLLECTION", DEFAULT_COLLECTION)
+COLLECTION_IS_EXPLICIT = "VECTOR_COLLECTION" in os.environ
 CHROMA_PATH = os.environ.get("CHROMA_PATH", "./chroma_db")
 BACKEND     = os.environ.get("VECTOR_BACKEND", "chroma").lower()
 SPACE       = "cosine"

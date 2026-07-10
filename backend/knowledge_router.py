@@ -230,11 +230,16 @@ def route(question: str) -> dict:
                 spec_ids = cand[:3]; schema_hint = cand_name
                 break
     major = ent["requested_major"]
-    # If a major was requested but that spec doesn't have it, that's a version we can't honour.
-    if spec_ids and major is not None:
+    # Required-fields / schema-fact questions are owned by the deterministic spec_facts
+    # engine, which resolves the exact version and returns an explicit UNRESOLVED result
+    # (with the full requested version + available versions) when a version is absent. Defer
+    # those entirely — the router must NOT preempt them with a major-only abstention.
+    is_reqfield = bool(_REQFIELD.search(q))
+    # For NON-required-fields questions: if a requested major isn't available for a named
+    # spec, abstain rather than answer another major (never a wrong-major answer).
+    if spec_ids and major is not None and not is_reqfield:
         for s in list(spec_ids):
             if str(major) not in L.majors_for(s):
-                # requested version absent for a named spec → abstain rather than answer another major
                 return {"kind": "abstain", "intent": "WRONG_VERSION_REQUESTED",
                         **_abstain(f"{s} v{major}")}
     if spec_ids or oda_ids:

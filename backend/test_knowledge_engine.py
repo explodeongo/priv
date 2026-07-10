@@ -85,8 +85,12 @@ ok(route("Is TMF760 a v4 or v5 API in TMFC027?")["kind"] == "answer", "API-versi
 ok("v5" in route("Is TMF760 a v4 or v5 API in TMFC027?")["answer"], "TMF760 in TMFC027 is v5")
 ok(route("What is the mandatory security API for every ODA component?")["kind"] == "answer", "every-component security → TMF669")
 ok("TMF669" in route("What is the mandatory security API for every ODA component?")["answer"], "security API answer = TMF669")
-# explicit version requested but absent for the spec → abstain (never answer another major)
-ok(route("What are the fields of Alarm in TMF642 v9?")["kind"] == "abstain", "absent requested major → abstain")
+# explicit version absent for a NON-required-fields question → abstain (never answer another major)
+ok(route("Give an overview of TMF642 v9")["kind"] == "abstain", "absent requested major (non-field) → abstain")
+# a required-fields question with an absent version DEFERS to spec_facts (its UNRESOLVED path),
+# so the router must NOT preempt it with a major-only abstention
+ok(route("What are the mandatory fields of Alarm in TMF642 v9?")["kind"] != "abstain",
+   "required-fields v-absent defers to spec_facts (not router abstention)")
 
 # TMF required-fields questions must NOT be hijacked into a deterministic ODA answer
 ok(route("What mandatory fields does TMF622 Product Order require?")["kind"] in ("rag", "defer"),
