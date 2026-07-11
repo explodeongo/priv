@@ -41,9 +41,9 @@ Ask it:                                   Point it at your spec:
 | | **Domain assistant** (RAG) | **Compliance agent** (deterministic) |
 |---|---|---|
 | Purpose | Understand TM Forum | Conform to TM Forum |
-| Powered by | Local LLM over the TMF corpus | A rules + diff engine — **no AI** |
+| Powered by | Local LLM + a deterministic knowledge router over the TMF corpus | A rules + diff engine — **no AI** |
 | Gives you | Cited answers, follow-ups | A 0–100 score, the gaps, an auto-fix |
-| Trust model | Grounded + cited | Validated against 169 official specs |
+| Trust model | Grounded, cited & authority-aware | Validated against 169 official specs |
 
 The same backend serves both — exposed through the **web app**, the **VS Code extension**, a **REST API**, a **Python SDK**, a **CLI**, a **GitHub Action**, and an **MCP server**.
 
@@ -101,10 +101,12 @@ Roll the above across a whole folder/portfolio of specs into one board-ready rep
 
 ## How it works
 
-**The assistant (RAG):**
+**The assistant (Knowledge Engine V2):** every question runs through a deterministic pipeline *before* any text is generated, so the model narrates evidence instead of inventing it.
 1. **Ingest** — `ingest.py` clones the TM Forum Open API repo set (TMF620–TMF937 + ODA Canvas + design-guideline/data-model docs), parses each spec into text, embeds it with `nomic-embed-text`, and stores it in ChromaDB.
-2. **Retrieve** — on each question the backend detects which spec(s) you mean — by number (`TMF641`) or by name (`Product Catalog Management API`) — pulls that spec's chunks directly, then fills the rest with semantic matches and your uploaded documents.
-3. **Generate** — the chunks + your question go to a local LLM (Llama 3.1 8B in **Deep** mode; a 3B model in **⚡ Fast** mode) which writes a grounded answer with inline `[n]` citations, or says it doesn't know rather than hallucinating.
+2. **Route deterministically** — exact entities (`TMF641`, `TMFC050`, versions) are extracted and a rules-based router answers what it can *without the LLM*: ODA component-contract facts (exposed / mandatory / dependent APIs, events) come straight from the canonical component specs; a named spec with no indexed evidence — or a requested version that doesn't exist — triggers an **honest abstention** instead of a guess.
+3. **Retrieve** — version- and content-scoped retrieval pulls the named spec's chunks (isolating the requested major version so v4 answers never leak v5), then fills the rest with semantic matches and your uploaded documents.
+4. **Govern authority & relationships** — a deterministic gate decides *which source has the right to answer* and *what the evidence is allowed to prove*: it won't pass off an Open API spec as the SID/eTOM authority, won't generalise one API's behaviour into a TM-Forum-wide rule, preserves the exact relationship type (a schema reference is not an API dependency; an ODA dependency is not a runtime call, and its direction is never reversed), and never invents a `format`/`pattern`/`enum` the schema doesn't declare. When the authoritative source is absent, it abstains rather than substituting a weaker one.
+5. **Generate** — the scoped evidence + your question go to a local LLM (Llama 3.1 8B in **Deep** mode; a 3B model in **⚡ Fast** mode), which writes a grounded answer with inline `[n]` citations and an **authority-aware confidence** level — or says it doesn't know rather than hallucinating.
 
 **The compliance agent:** parses your spec and runs the deterministic engines above — *no model involved*. The canonical TMF specs in `backend/data/` (cloned at ingest time) are the ground truth for profile detection and the X-ray.
 
@@ -242,6 +244,8 @@ SynaptDI/
 ├── backend/
 │   ├── main.py                 ← FastAPI app: RAG query engine + all /conformance/* endpoints
 │   ├── ingest.py               ← clone + parse + embed + index the TM Forum corpus
+│   ├── knowledge_*.py          ← Knowledge Engine V2: deterministic router + authority/relationship governance (pre-RAG)
+│   ├── oda_component_contract.py ← canonical ODA component-contract resolver (exposed/dependent APIs, events)
 │   ├── conformance.py          ← TMF630 structural rule engine (deterministic)
 │   ├── tmf_profile.py          ← profile-aware conformance + scaffold (diff/complete vs canonical)
 │   ├── xray.py                 ← API estate X-ray (portfolio roll-up) + CLI
@@ -263,7 +267,7 @@ SynaptDI/
 
 ## API reference
 
-**Assistant** — `POST /query` · `POST /query/stream` (token streaming) · `POST /followups` · `GET /coverage` · `GET /health` · `GET /stats` · `GET /analytics` (admin).
+**Assistant** — `POST /query` · `POST /query/stream` (token streaming) · `POST /followups` · `GET /coverage` · `GET /health` · `GET /stats` · `GET /analytics` (admin). `GET /health` and `GET /stats` also report the active vector collection and the **authority-availability inventory** — which authoritative source classes (Open API schema, ODA contract, SID, eTOM, design guidance) are actually present in the index.
 
 **Compliance** (all deterministic, no LLM):
 

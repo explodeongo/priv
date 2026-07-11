@@ -39,6 +39,8 @@ import spec_facts    # deterministic answers for structured spec-fact questions
 import knowledge_entities   # Knowledge Engine V2 — deterministic entity extraction (Phase 7B)
 import knowledge_link       # Knowledge Engine V2 — corpus inventory + entity linking
 import knowledge_router     # Knowledge Engine V2 — deterministic routing before RAG
+import knowledge_governance  # Knowledge Engine V2 — authority + relationship governance (Phase 7E)
+import knowledge_authority   # Knowledge Engine V2 — authority availability inventory (Phase 7E)
 from vectorstore import get_store, reset_store   # backend-agnostic vector store (Chroma today)
 import vectorstore   # Phase 7C: read the active/default knowledge collection for startup reporting
 
@@ -833,12 +835,19 @@ Write like a sharp, friendly expert explaining something to a teammate — clear
 Shape the answer to the question:
 - Fields, attributes, query parameters, events, or status codes → a Markdown table such as `| Field | Required | Description |`, marking each mandatory or optional, and give every row a real plain-English description of what it is for (not just its name).
 - Comparing two or more things (e.g. specs) → a Markdown table with one column each, then a one-line bottom line on which to use when.
-- "How do I…" or how to call an operation → numbered steps plus a fenced code block with a concrete, runnable example (curl by default, or the language asked for) built from the real path and fields in the context.
+- "How do I…" or how to call an operation → numbered steps in prose. Include a fenced, runnable code example ONLY when the user explicitly asked for an example/code/curl/request, OR the CONTEXT contains the exact endpoint path, HTTP method, and request fields to build one without inventing anything. Never invent a hostname, path, authentication, or request field, and never turn an explanatory or relationship question into a create-resource tutorial.
 - Anything else → short, scannable bullets or brief paragraphs.
 
 Every specific field name, path, status code, and value must come from the CONTEXT — never invent them — but do explain and connect them in your own words so the answer teaches rather than just lists. Cite inline with the bracketed source number: put [n] right after the fact it backs (combine like [2][3]); cite only sources you used. Synthesize across related chunks. Answer confidently ONLY when the CONTEXT clearly supports the specific API, spec, version, field, operation, or capability named in the QUESTION. If the CONTEXT does not contain evidence for the exact thing asked about, say you don't have authoritative evidence for it rather than inferring it from a different, neighbouring, or unrelated API — never fabricate fields, operations, versions, or component relationships to fill a gap. Never open with filler like "Based on the provided context" or "According to the sources".
 
-When asked what fields a resource requires, this almost always means what you must SUBMIT to create one: read the required list from the resource's _Create schema (e.g. ProductOrder_Create → productOrderItem), not the response resource's server-assigned id, not a *Ref or *_Update schema, and not an unrelated EventSubscription/Hub/Event/Error schema. Name the parent object a required field sits on (e.g. each productOrderItem needs an action and a productOffering) when the context shows it, and never answer with a single bare field name when you can explain what it is and where it lives. If the QUESTION names a specific version, answer for THAT major version only and do not substitute another major version's fields. If the CONTEXT mixes versions, state which version your answer reflects; never silently pick "the latest"."""
+When asked what fields a resource requires, this almost always means what you must SUBMIT to create one: read the required list from the resource's _Create schema (e.g. ProductOrder_Create → productOrderItem), not the response resource's server-assigned id, not a *Ref or *_Update schema, and not an unrelated EventSubscription/Hub/Event/Error schema. Name the parent object a required field sits on (e.g. each productOrderItem needs an action and a productOffering) when the context shows it, and never answer with a single bare field name when you can explain what it is and where it lives. If the QUESTION names a specific version, answer for THAT major version only and do not substitute another major version's fields. If the CONTEXT mixes versions, state which version your answer reflects; never silently pick "the latest".
+
+AUTHORITY & RELATIONSHIP DISCIPLINE (hold these even if it makes the answer shorter):
+- Do not generalize one or a few specs into a TM-Forum-wide normative rule; a cross-API rule requires a normative design guideline, which may not be present.
+- Do not invent a format, pattern, enum, length, or range the schema does not explicitly declare. `type: string`, a property name, an example, or a description is NOT a validation constraint — so it does not imply a UUID/URI/date-time meaning. If the requested constraint is absent, say the specification does not define it.
+- Do not present an Open API spec as the SID / Information Framework authority, and do not present an ODA component contract as OpenAPI schema authority (or the reverse). If the required authority for the exact claim is absent, say so and do not substitute another framework or a lower-authority source.
+- State the NARROWEST relationship the evidence proves. A schema reference / `$ref` / relatedEntity / relatedParty is a data-model association — not an API dependency, not a runtime call, not an integration. If the evidence proves an association but not a dependency, say association. If it proves an ODA dependency (component → API) but not a runtime call, say dependency and do not claim a runtime invocation.
+- Never reverse an ODA dependency direction: a component depends on an API (component → API); the API does not depend on the component, and a dependent API is not called by every operation of the component. Component exposure is not runtime invocation. Do not treat semantic relevance, a shared schema name, or an href as proof of an API-to-API call, and do not invent API-to-API calls."""
 
 _GUARD_LINE = """
 
@@ -1090,7 +1099,21 @@ def _grounded_aggregation_answer(fact: dict, req, model: str, npred: int) -> dic
     return spec_facts.grounded_aggregation_answer(req.question, fact, _gen)
 
 _HIGH_CONF = {"level": "high", "score": 100, "strong": 1}
-_LOW_CONF  = {"level": "low", "score": 0, "strong": 0}
+_MED_CONF  = {"level": "medium", "score": 55, "strong": 1}
+_LOW_CONF  = {"level": "low", "score": 10, "strong": 0}
+# Phase 7E: authority-aware confidence. A deterministic governance answer carries its own
+# level; a "constrain" case caps how confident the generated answer may claim to be (HIGH is
+# impossible for a relationship-guarded, constraint-guarded, or lower-authority answer).
+_CONF_BY_LEVEL = {"high": _HIGH_CONF, "medium": _MED_CONF, "low": _LOW_CONF}
+_CONF_RANK = {"low": 0, "medium": 1, "high": 2}
+
+def _cap_confidence(conf: dict, cap_level: Optional[str]) -> dict:
+    """Lower `conf` to at most `cap_level` (authority/relationship cap). Never raises it."""
+    if not cap_level or not conf:
+        return conf
+    if _CONF_RANK.get(conf.get("level"), 2) <= _CONF_RANK.get(cap_level, 2):
+        return conf
+    return dict(_CONF_BY_LEVEL[cap_level])
 
 def _resolve_governance_route(req, model: str, npred: int):
     """Runs the full governance router — required-fields (single-version or
@@ -1207,7 +1230,8 @@ def health():
         return {"status":"ok","chunks_indexed":col.count(),"ollama_models":models,
                 "llm_model":LLM_MODEL,"embed_model":EMBED_MODEL,
                 "collection":vectorstore.COLLECTION,
-                "collection_source":("explicit" if vectorstore.COLLECTION_IS_EXPLICIT else "default")}
+                "collection_source":("explicit" if vectorstore.COLLECTION_IS_EXPLICIT else "default"),
+                "authority":knowledge_authority.inventory_report()}   # Phase 7E authority availability
     except Exception as e:
         raise HTTPException(503, str(e))
 
@@ -1215,7 +1239,8 @@ def health():
 def stats():
     col = get_collection()
     return {"chunks_indexed": col.count(), "collection": vectorstore.COLLECTION,
-            "collection_source": ("explicit" if vectorstore.COLLECTION_IS_EXPLICIT else "default")}
+            "collection_source": ("explicit" if vectorstore.COLLECTION_IS_EXPLICIT else "default"),
+            "authority": knowledge_authority.inventory_report()}   # Phase 7E authority availability
 
 @app.get("/coverage")
 def coverage():
@@ -1574,6 +1599,7 @@ def query(req: QueryRequest, authorization: Optional[str] = Header(None)):
     # falls back to the exact deterministic answer. ODA component questions are
     # unaffected — still answered directly, as before.
     khints = None
+    gov_extra, gov_conf_cap = "", None
     if scope in ("all", "kb"):
         # Knowledge Engine V2 (Phase 7B): deterministic ODA-contract routing + honest
         # abstention run FIRST — a named component/spec question must not be mis-grabbed by
@@ -1589,6 +1615,26 @@ def query(req: QueryRequest, authorization: Optional[str] = Header(None)):
             return QueryResponse(answer=kdec["answer"], sources=[],
                                  latency_ms=int((time.time()-start)*1000), chunks_retrieved=0,
                                  confidence=_LOW_CONF)
+        # Knowledge Engine V2 (Phase 7E): authority + relationship governance runs BEFORE the
+        # spec-facts engine and general RAG. It abstains when the required authority is absent
+        # (SID/eTOM/global-design-rule), answers relationship questions deterministically from
+        # the ODA contract with correct direction, and constrains constraint/association
+        # answers. Default-PROCEEDs for entity-scoped facts (Phase 7C path untouched).
+        gov = knowledge_governance.govern(req.question, kdec)
+        if gov["action"] == "answer":
+            return _fact_response_payload(req, scope, mode, start, who,
+                                          {"answer": gov["answer"], "sources": gov.get("sources", [])},
+                                          _CONF_BY_LEVEL[gov["confidence_level"]])
+        if gov["action"] == "abstain":
+            _log_query(req.question, False, who)
+            return QueryResponse(answer=gov["answer"], sources=[],
+                                 latency_ms=int((time.time()-start)*1000), chunks_retrieved=0,
+                                 confidence=_CONF_BY_LEVEL[gov["confidence_level"]])
+        if gov["action"] == "constrain":
+            gov_extra = gov.get("directive", "")
+            gov_conf_cap = gov.get("confidence_level")
+            if gov.get("retrieval"):
+                khints = {**(khints or {}), **gov["retrieval"]}
         # Existing deterministic schema-required-fields engine handles "what mandatory fields
         # does TMF622 require?". Phase 7C version guard: if the user asked for an EXPLICIT major
         # but governance resolves a DIFFERENT major (it defaults to a single version), do NOT
@@ -1649,7 +1695,7 @@ def query(req: QueryRequest, authorization: Optional[str] = Header(None)):
                              chunks_retrieved=0, confidence=_LOW_CONF)
 
     ident = _spec_identity_extra(khints, chunks)   # Phase 7C: precise spec-identity grounding
-    extra = _project_extra(req.project_instructions) + extra + ident + spec_facts.oda_grounding(req.question) + _answer_shape_directive(req.question)
+    extra = _project_extra(req.project_instructions) + extra + ident + gov_extra + spec_facts.oda_grounding(req.question) + _answer_shape_directive(req.question)
     try:    answer = generate_answer(build_prompt(req.question, chunks, guarded=not confident, history=req.history, extra=extra), model, npred)
     except Exception as e: raise HTTPException(503, f"Generation failed: {e}")
 
@@ -1661,7 +1707,7 @@ def query(req: QueryRequest, authorization: Optional[str] = Header(None)):
 
     _log_query(req.question, True, who)
     srcs = build_sources(chunks)
-    conf = _confidence(chunks)
+    conf = _cap_confidence(_confidence(chunks), gov_conf_cap)   # Phase 7E: authority-aware cap
     if not req.history:
         cache_put(req.question, scope, mode, answer, srcs, conf, project_instructions=req.project_instructions)
     return QueryResponse(answer=answer, sources=srcs,
@@ -1702,6 +1748,7 @@ def query_stream(req: QueryRequest, authorization: Optional[str] = Header(None))
     # /query uses, then either format raw or run the grounded-generation bridge, then
     # stream the final (already integrity-validated) answer as a single chunk.
     khints = None
+    gov_extra, gov_conf_cap = "", None
     if scope in ("all", "kb"):
         # Knowledge Engine V2 (Phase 7C: streaming path mirrors /query so the chat UI gets
         # the same deterministic routing, abstention, version isolation and evidence gating).
@@ -1715,6 +1762,23 @@ def query_stream(req: QueryRequest, authorization: Optional[str] = Header(None))
             return _fact_stream_response(req, ans, _HIGH_CONF, start, who)
         if kdec.get("kind") == "abstain":
             return _fact_stream_response(req, {"answer": kdec["answer"], "sources": []}, _LOW_CONF, start, who)
+        # Phase 7E authority + relationship governance — identical to /query (parity).
+        gov = knowledge_governance.govern(req.question, kdec)
+        if gov["action"] == "answer":
+            ans = {"answer": gov["answer"], "sources": gov.get("sources", [])}
+            _conf = _CONF_BY_LEVEL[gov["confidence_level"]]
+            if not req.history and not req.no_cache:
+                cache_put(req.question, scope, mode, ans["answer"], ans["sources"], _conf,
+                         project_instructions=req.project_instructions)
+            return _fact_stream_response(req, ans, _conf, start, who)
+        if gov["action"] == "abstain":
+            return _fact_stream_response(req, {"answer": gov["answer"], "sources": []},
+                                         _CONF_BY_LEVEL[gov["confidence_level"]], start, who)
+        if gov["action"] == "constrain":
+            gov_extra = gov.get("directive", "")
+            gov_conf_cap = gov.get("confidence_level")
+            if gov.get("retrieval"):
+                khints = {**(khints or {}), **gov["retrieval"]}
         routed = _resolve_governance_route(req, model, npred)
         if routed:
             req_major = str(khints["major"]) if (khints and khints.get("major") is not None) else None
@@ -1755,7 +1819,7 @@ def query_stream(req: QueryRequest, authorization: Optional[str] = Header(None))
         if _fp:
             return _fact_stream_response(req, {"answer": _fp, "sources": []}, _LOW_CONF, start, who)
     _ident = _spec_identity_extra(khints, chunks)
-    extra = _project_extra(req.project_instructions) + extra + _ident + spec_facts.oda_grounding(req.question) + _answer_shape_directive(req.question)
+    extra = _project_extra(req.project_instructions) + extra + _ident + gov_extra + spec_facts.oda_grounding(req.question) + _answer_shape_directive(req.question)
 
     def gen():
         if not chunks:
@@ -1765,7 +1829,7 @@ def query_stream(req: QueryRequest, authorization: Optional[str] = Header(None))
                               "latency_ms": int((time.time() - start) * 1000),
                               "chunks_retrieved": 0}) + "\n"
             return
-        conf = _confidence(chunks)
+        conf = _cap_confidence(_confidence(chunks), gov_conf_cap)   # Phase 7E: authority-aware cap
         # Tell the client what we're reading before the slow generation starts.
         yield json.dumps({"type": "context",
                           "sources": _ordered_sources(chunks)[0][:6],
