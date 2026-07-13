@@ -1,8 +1,8 @@
-# SynaptDI
+# Domain Hub
 
-**Synapt Domain Intelligence — a local TM Forum knowledge assistant *and* an autonomous Open API compliance agent.**
+**Domain Hub — a local TM Forum knowledge assistant *and* an autonomous Open API compliance agent.**
 
-SynaptDI does two things, both entirely on local infrastructure (Ollama + ChromaDB — no cloud API, no per-query cost, no data leaving your environment):
+Domain Hub does two things, both entirely on local infrastructure (Ollama + ChromaDB — no cloud API, no per-query cost, no data leaving your environment):
 
 1. **Answers** TM Forum questions in plain English, with citations back to the actual Open API spec files.
 2. **Checks, scores, and fixes** your own API specs against the TM Forum standard — and tells you exactly how far they are from the *real* TMF API they're meant to implement.
@@ -22,6 +22,10 @@ Ask it:                                   Point it at your spec:
 ## Table of contents
 - [Two halves, one engine](#two-halves-one-engine)
 - [Where it runs](#where-it-runs)
+- [An AI engineering platform for the TM Forum SDLC](#an-ai-engineering-platform-for-the-tm-forum-sdlc)
+- [The Knowledge Layer](#the-knowledge-layer)
+- [The Governance Layer](#the-governance-layer)
+- [Roadmap](#roadmap)
 - [The compliance agent](#the-compliance-agent)
 - [How it works](#how-it-works)
 - [Prerequisites](#prerequisites)
@@ -58,9 +62,118 @@ One validated engine, every surface a developer or system might use:
 - **REST API + Python SDK** — `backend/` (FastAPI, interactive OpenAPI docs at `/docs`) and a zero-dependency [`synaptdi` SDK](sdk/) for external systems.
 - **CLI** — `validate_conformance.py`, `xray.py`, `synaptdi_check.py` for folder scans and CI gates. See [Command-line tools](#command-line-tools).
 - **GitHub Action** — [`action.yml`](action.yml) gates pull requests on TMF conformance.
-- **MCP server** — [`mcp-server/`](mcp-server/) lets AI agents (Cursor, Claude Desktop, Claude Code) call SynaptDI natively.
+- **MCP server** — [`mcp-server/`](mcp-server/) lets AI agents (Cursor, Claude Desktop, Claude Code) call Domain Hub natively.
 
 > New here? Start with the **[demo runbook](DEMO.md)**.
+
+---
+
+## An AI engineering platform for the TM Forum SDLC
+
+Domain Hub started as a TM Forum chatbot. It is evolving into an **AI engineering platform that spans the full TM Forum software development lifecycle** — *understand → generate → validate → govern* — where every interface is driven by the **same Knowledge Engine and the same Governance Layer**.
+
+The design principle is **one engine, many interfaces**. Each new surface is a thin client over the shared backend; none of them re-implement reasoning, retrieval, or governance. This is what keeps a Word plugin, a VS Code extension, and a Claude MCP tool all giving the *same* cited, version-aware, standards-compliant answer.
+
+```text
+  Interfaces      Chat  ·  VS Code  ·  MCP (Claude · Cursor · Codex)  ·  Office plugins
+                                        │
+  Governance      authority · version-awareness · evidence · compliance · confidence · explainability
+     Layer                              │
+  Knowledge       Open APIs · ODA · CTK · SID · specs · Git · org knowledge  →  one cited, version-aware engine
+     Layer
+```
+
+**Interfaces — current and planned** (see the [Roadmap](#roadmap) for the full status matrix):
+
+- **Available today** — AI Chat assistant (web app), VS Code extension, and an MCP server usable from Claude Desktop, Claude Code, and Cursor.
+- **In progress** — expanding the MCP server to the ODA and CTK capabilities, with authentication.
+- **Roadmap** — ChatGPT / Codex MCP, and Microsoft Word / Excel / PowerPoint plugins.
+
+The goal is not "another chatbot." It is a single, governed reasoning engine that meets a TM Forum engineer wherever they already work.
+
+---
+
+## The Knowledge Layer
+
+The Knowledge Layer is the **unified reasoning engine** underneath every interface. It answers with **citations, confidence scores, and version awareness** — never an ungrounded guess — by combining a deterministic knowledge router over the ingested TM Forum corpus with a local LLM for phrasing.
+
+It progressively ingests and reasons across these sources:
+
+| Source | Status |
+|---|---|
+| TM Forum Open APIs (Git + published specs) | ✅ Available |
+| TM Forum ODA Components (catalog + manifests) | ✅ Available |
+| TM Forum specifications | ✅ Available |
+| Git repositories | ✅ Available |
+| Organizational knowledge (uploaded documents) | ✅ Available |
+| TM Forum CTK results as a first-class knowledge source | 🚧 In progress |
+| TM Forum SID (Shared Information/Data Model) | 🗺️ Roadmap |
+
+Whatever the source, the contract to the caller is the same: an answer, the **evidence it rests on**, a **confidence score**, and the **version** it applies to.
+
+---
+
+## The Governance Layer
+
+The Governance Layer sits **above** the Knowledge Layer. It is what makes Domain Hub a *trusted engineering assistant* rather than a generic LLM: every answer, generated artifact, and recommendation must pass through it before it reaches a user.
+
+Its responsibilities:
+
+- **TM Forum governance** — enforce that outputs conform to TM Forum standards.
+- **Authority resolution** — decide which source is authoritative when sources disagree.
+- **Version-aware reasoning** — never blend or confuse API versions (e.g. TMF622 v4 vs v5).
+- **Evidence validation** — every claim must be backed by retrievable evidence.
+- **Hallucination prevention** — grounded generation; unsupported claims are withheld, not guessed.
+- **Policy enforcement** — apply organizational and standards policy to responses.
+- **Relationship validation** — check cross-entity relationships (API ↔ component ↔ data model).
+- **Compliance verification** — confirm alignment with the applicable TM Forum specification.
+- **Confidence scoring** — attach a calibrated confidence to every answer.
+- **Explainability** — show *why* an answer was given and *what* it is grounded in.
+
+A large part of this layer exists today (authority resolution, version-aware reasoning, evidence validation, grounded generation, and confidence scoring are live); the remaining responsibilities are being hardened as the platform grows. The governing rule is constant: **if it cannot be grounded and version-scoped, Domain Hub does not assert it.**
+
+---
+
+## Roadmap
+
+Domain Hub is a working product with a clear forward path. This matrix separates what runs today from what is planned, so the vision is never mistaken for the current state.
+
+**Legend:** ✅ Available today · 🚧 In progress · 🗺️ Roadmap
+
+| Area | Capability | Status |
+|---|---|---|
+| **Interfaces** | AI Chat assistant (web app) | ✅ |
+| | VS Code extension (`vscode-extension/`, v0.15.0) | ✅ |
+| | MCP server — knowledge + schema-conformance tools (Claude Desktop · Claude Code · Cursor) | ✅ preview |
+| | MCP server — ODA catalog, contract resolver & CTK tools + authentication | 🚧 |
+| | ChatGPT / Codex MCP server | 🗺️ |
+| | Microsoft Word plugin | 🗺️ |
+| | Microsoft Excel plugin | 🗺️ |
+| | Microsoft PowerPoint plugin | 🗺️ |
+| **Knowledge** | Open APIs · ODA · specifications · Git · organizational docs | ✅ |
+| | CTK results as a knowledge source | 🚧 |
+| | TM Forum SID (Shared Information/Data Model) | 🗺️ |
+| **1. Intelligent question answering** | Cited answers, confidence scoring, version-aware retrieval, related questions | ✅ |
+| **2. TM Forum code generation** | Spec scaffolding — complete a partial spec from the canonical TMF spec | ✅ |
+| | REST APIs · data models · functional blocks in Python / Java | 🗺️ |
+| **3. Conformance validation** | TMF630 structural scoring · profile coverage · auto-fix · estate X-ray | ✅ |
+| | ODA Component manifest validation · ODA contract resolution | ✅ |
+| | ODA CTK execution → deterministic PASS / FAIL / INCOMPLETE verdict | ✅ validated¹ |
+| **4. Workflow intelligence** | eTOM process guidance · engineering workflows · SDLC automation | 🗺️ |
+| **5. AI integrations** | MCP servers · IDE integrations · enterprise productivity plugins | 🚧 |
+| **Governance** | Authority resolution · version-aware reasoning · evidence validation · confidence · explainability | ✅ |
+
+<sub>¹ CTK execution is validated end-to-end against the official TM Forum Component CTK (real PASS/FAIL verdicts from real test runs; see [DEMO.md](DEMO.md)). Running it against a production ODA deployment requires an ODA Canvas–managed cluster.</sub>
+
+### The five capability pillars
+
+1. **Intelligent question answering** *(available)* — grounded, cited answers with confidence and version awareness.
+2. **TM Forum code generation** *(scaffolding available; full REST/data-model/Python/Java generation on the roadmap)*.
+3. **Conformance validation** *(available)* — Open API validation, ODA component validation, CTK execution, standards compliance.
+4. **Workflow intelligence** *(roadmap)* — eTOM process guidance, engineering workflows, and SDLC automation.
+5. **AI integrations** *(in progress)* — MCP servers, IDE integrations, and enterprise productivity plugins.
+
+> Every roadmap item extends the **same** Knowledge and Governance layers — new interfaces and capabilities, never a second, ungoverned brain.
 
 ---
 
@@ -212,7 +325,7 @@ sd.xray(["a.yaml", "b.yaml"])          # portfolio report
     min: "90"
 ```
 
-**MCP server** ([`mcp-server/`](mcp-server/)) — let Cursor / Claude Desktop / Claude Code call SynaptDI natively (`tmf_ask`, `tmf_check`, `tmf_profile`, `tmf_scaffold`). Config in [`mcp-server/README.md`](mcp-server/README.md).
+**MCP server** ([`mcp-server/`](mcp-server/)) — let Cursor / Claude Desktop / Claude Code call Domain Hub natively (`tmf_ask`, `tmf_check`, `tmf_profile`, `tmf_scaffold`). Config in [`mcp-server/README.md`](mcp-server/README.md).
 
 ---
 
@@ -256,7 +369,7 @@ SynaptDI/
 │   ├── vectorstore.py · eval.py · evals/
 │   ├── chroma_db/  data/       ← generated, gitignored
 ├── frontend/app/               ← Next.js: Chat · Documents · Conformance & X-ray · Admin · Settings
-├── vscode-extension/           ← "Ask SynaptDI" extension + examples/ (demo specs)
+├── vscode-extension/           ← Domain Hub VS Code extension + examples/ (demo specs)
 ├── sdk/                        ← zero-dependency Python SDK (synaptdi)
 ├── mcp-server/                 ← MCP server for Cursor / Claude / Claude Code
 ├── action.yml + .github/       ← reusable GitHub Action + the TMF-conformance workflow
@@ -318,4 +431,4 @@ Full interactive docs at `http://localhost:8000/docs`.
 
 ---
 
-*SynaptDI — a local, citation-grounded RAG assistant **and** a validated TM Forum compliance agent. Ask it anything about TM Forum; point it at your APIs and it tells you the truth.*
+*Domain Hub — a local, citation-grounded RAG assistant **and** a validated TM Forum compliance agent. Ask it anything about TM Forum; point it at your APIs and it tells you the truth.*
